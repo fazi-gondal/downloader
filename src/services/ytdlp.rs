@@ -64,11 +64,15 @@ impl YtDlpService {
         self.network.append_cli_args(&mut args);
         args.push(url.to_string());
 
-        let output = std::process::Command::new(&self.binary)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        let mut yt_cmd = std::process::Command::new(&self.binary);
+        yt_cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            yt_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = yt_cmd.output()
             .map_err(|e| AppError::ytdlp(format!("failed to spawn yt-dlp: {e}")))?;
 
         if !output.status.success() {
@@ -94,11 +98,15 @@ impl YtDlpService {
         self.network.append_cli_args(&mut args);
         args.push(url.to_string());
 
-        let output = std::process::Command::new(&self.binary)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        let mut yt_cmd = std::process::Command::new(&self.binary);
+        yt_cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            yt_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = yt_cmd.output()
             .map_err(|e| AppError::ytdlp(format!("failed to spawn yt-dlp: {e}")))?;
 
         if !output.status.success() {

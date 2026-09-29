@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+// In release builds, tell Windows this is a GUI app — no console window.
+// In debug builds (cargo run), the console stays open for log output.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use gpui_kit::*;
 
