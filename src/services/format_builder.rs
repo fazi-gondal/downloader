@@ -104,35 +104,19 @@ impl FormatBuilder {
                 Self::video_selector(options.resolution, options.fps_filter, false)
             };
 
-            // Detect whether each key looks like a format ID (digits/dashes, >=4 chars)
-            // or a language code (2-3 alpha chars, possibly with country suffix like "en-US").
-            let is_lang_code = |k: &str| -> bool {
-                // A lang code is purely alphabetic (with optional hyphen+country), never all-digits
-                !k.chars().all(|c| c.is_ascii_digit() || c == '-')
-                    && (k.len() == 2 || k.len() == 3
-                        || (k.contains('-') && k.len() <= 8))
-            };
-
             let audio_parts: Vec<String> = options
                 .selected_audio_langs
                 .iter()
-                .map(|k| {
-                    if is_lang_code(k) {
-                        // Language-based filter: pick best audio for that language
-                        format!("bestaudio[language={k}]")
-                    } else {
-                        // Raw format ID selected directly from the format list
-                        k.clone()
-                    }
-                })
+                .map(|k| k.clone()) // format IDs used directly in the -f string
                 .collect();
 
             if options.selected_audio_langs.len() == 1 {
-                // Single track: simple video+audio merge
+                // Single track: video + that specific audio format ID
                 let audio = &audio_parts[0];
                 format!("{video_part}+{audio}/{video_part}+bestaudio/best")
             } else {
-                // Multiple tracks: chain them all — requires --audio-multistreams
+                // Multiple tracks: chain all format IDs with +, requires --audio-multistreams
+                // yt-dlp syntax: -f "video+audio1+audio2" --audio-multistreams
                 let audio_chain = audio_parts.join("+");
                 format!("{video_part}+{audio_chain}/{video_part}+bestaudio/best")
             }
@@ -179,20 +163,13 @@ impl FormatBuilder {
             }
             SubtitleMode::Custom => {
                 if !options.subtitle_langs.is_empty() {
-                    // Embed only the selected language codes. No separate files.
-                    // Use "en.*,fr.*" pattern so both manual and auto-generated
-                    // variants of each language are included when available.
-                    let langs_pattern = options
-                        .subtitle_langs
-                        .iter()
-                        .map(|l| format!("{l}.*"))
-                        .collect::<Vec<_>>()
-                        .join(",");
+                    // Embed only the selected subtitle language codes. No separate files.
+                    // yt-dlp comma-separated list: "en,fr,de"
                     extra.push("--embed-subs".into());
                     extra.push("--sub-langs".into());
-                    extra.push(langs_pattern);
+                    extra.push(options.subtitle_langs.join(","));
                 }
-                // If no langs selected yet, skip — nothing to embed.
+                // If no langs selected, skip — nothing to embed.
             }
         }
 

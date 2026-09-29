@@ -900,9 +900,13 @@ impl Render for ConfigView {
                             CurrentMedia::Single(m) => m.audio_tracks.clone(),
                             _ => Vec::new(),
                         };
+                        // Always key by format_id — it is the exact yt-dlp format selector
+                        // (e.g. "251", "140", "233-dub-en") and works directly in -f strings.
+                        // Language codes require [language=xx] attribute filters which often
+                        // return nothing because many audio formats lack language metadata.
                         let all_track_keys: Vec<String> = available_audio
                             .iter()
-                            .map(|t| t.language.clone().unwrap_or_else(|| t.format_id.clone()))
+                            .map(|t| t.format_id.clone())
                             .collect();
                         let all_track_keys_clone = all_track_keys.clone();
 
@@ -970,12 +974,12 @@ impl Render for ConfigView {
                                                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                                                     .gap_2()
                                                     .p_2()
-                                                    .pr_6()
-                                                    .children(available_audio.into_iter().map(|track| {
-                                                        let key = track.language.clone().unwrap_or_else(|| track.format_id.clone());
+                                                     .pr_6()
+                                                     .children(available_audio.into_iter().map(|track| {
+                                                        // Always use format_id as the selection key.
+                                                        let key = track.format_id.clone();
                                                         let label = track.display_label();
-                                                        let is_checked = opts.selected_audio_langs.contains(&key)
-                                                            || opts.selected_audio_langs.contains(&track.format_id);
+                                                        let is_checked = opts.selected_audio_langs.contains(&key);
                                                         let key_clone = key.clone();
                                                         Checkbox::new(format!("audio-track-{}", track.format_id))
                                                             .label(label)
