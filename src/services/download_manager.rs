@@ -319,6 +319,10 @@ impl DownloadManager {
                 output_template,
                 "--no-playlist".into(),
                 "--no-warnings".into(),
+                "--remote-components".into(),
+                "ejs:github".into(),
+                "--extractor-args".into(),
+                "youtube:player_client=all".into(),
             ];
 
             if let Some(ref c) = compiled {

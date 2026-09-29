@@ -56,6 +56,10 @@ impl YtDlpService {
             "--no-playlist".into(),
             "--no-warnings".into(),
             "--no-call-home".into(),
+            "--remote-components".into(),
+            "ejs:github".into(),
+            "--extractor-args".into(),
+            "youtube:player_client=all".into(),
         ];
         self.network.append_cli_args(&mut args);
         args.push(url.to_string());
@@ -82,6 +86,10 @@ impl YtDlpService {
             "--no-warnings".into(),
             "--no-call-home".into(),
             "--flat-playlist".into(),
+            "--remote-components".into(),
+            "ejs:github".into(),
+            "--extractor-args".into(),
+            "youtube:player_client=all".into(),
         ];
         self.network.append_cli_args(&mut args);
         args.push(url.to_string());
@@ -361,22 +369,41 @@ impl YtDlpService {
             let acodec_base = acodec.split('.').next().unwrap_or(&acodec).to_lowercase();
             let is_opus = ext == "webm" || acodec_base == "opus";
 
-            let lang = f
+            let audio_track = f.get("audio_track");
+            let at_display = audio_track
+                .and_then(|at| at.get("displayName").or_else(|| at.get("display_name")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let at_id = audio_track
+                .and_then(|at| at.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let at_lang = at_id.split('.').next().unwrap_or("");
+
+            let lang_str = f
                 .get("language")
                 .and_then(|v| v.as_str())
                 .or_else(|| f.get("language_preference").and_then(|v| v.as_str()))
                 .unwrap_or("");
 
+            let lang = if !lang_str.is_empty() {
+                lang_str
+            } else {
+                at_lang
+            };
+
             let note = f.get("format_note").and_then(|v| v.as_str()).unwrap_or("");
             let lang_name = f.get("language_name").and_then(|v| v.as_str()).unwrap_or("");
 
-            let track_name = clean_track_name(lang, note, lang_name);
+            let track_name = if !at_display.is_empty() {
+                at_display.to_string()
+            } else {
+                clean_track_name(lang, note, lang_name)
+            };
 
-            let track_key = if !lang.is_empty() && !track_name.is_empty() {
-                format!("{lang}_{track_name}")
-            } else if !lang.is_empty() {
+            let track_key = if !lang.is_empty() {
                 lang.to_string()
-            } else if !track_name.is_empty() {
+            } else if !track_name.is_empty() && track_name != "Audio" {
                 track_name.clone()
             } else {
                 fid.clone()
@@ -525,7 +552,9 @@ fn classify_stream(vcodec: Option<&str>, acodec: Option<&str>, f: &Value) -> Str
 }
 
 fn common_lang_name(code: &str) -> &'static str {
-    match code.to_lowercase().as_str() {
+    let lower = code.to_lowercase();
+    let base = lower.split('-').next().unwrap_or(&lower);
+    match base {
         "en" => "English",
         "de" => "German",
         "fr" => "French",
@@ -535,9 +564,15 @@ fn common_lang_name(code: &str) -> &'static str {
         "ru" => "Russian",
         "ja" => "Japanese",
         "ko" => "Korean",
-        "zh" => "Chinese",
-        "zh-hans" => "Chinese (Simplified)",
-        "zh-hant" => "Chinese (Traditional)",
+        "zh" => {
+            if lower.contains("hans") {
+                "Chinese (Simplified)"
+            } else if lower.contains("hant") {
+                "Chinese (Traditional)"
+            } else {
+                "Chinese"
+            }
+        }
         "hi" => "Hindi",
         "ar" => "Arabic",
         "bn" => "Bangla",
@@ -549,6 +584,8 @@ fn common_lang_name(code: &str) -> &'static str {
         "ta" => "Tamil",
         "te" => "Telugu",
         "ml" => "Malayalam",
+        "mr" => "Marathi",
+        "pa" => "Punjabi",
         "ur" => "Urdu",
         "nl" => "Dutch",
         "sv" => "Swedish",
@@ -571,26 +608,34 @@ fn clean_track_name(l_code: &str, f_note: &str, l_name: &str) -> String {
         clean = clean.replace(suffix, "");
     }
     let lower = clean.to_lowercase();
-    if lower.contains("original (default)") || lower.contains("original(default)") {
-        clean = "Original Audio".to_string();
-    } else if lower.trim() == "original" || lower.trim() == "default" {
-        clean = "Original Audio".to_string();
+    let is_original = lower.contains("original (default)") || lower.contains("original(default)") || lower.contains("original");
+
+    let base_name = if !l_name.trim().is_empty() {
+        l_name.trim().to_string()
+    } else {
+        let mapped = common_lang_name(l_code);
+        if !mapped.is_empty() {
+            mapped.to_string()
+        } else if !l_code.trim().is_empty() {
+            l_code.trim().to_string()
+        } else {
+            clean.trim().to_string()
+        }
+    };
+
+    if is_original {
+        if base_name.is_empty() || base_name.eq_ignore_ascii_case("original") || base_name.eq_ignore_ascii_case("audio") {
+            "Original Audio".to_string()
+        } else if !base_name.contains("(Original)") {
+            format!("{base_name} (Original)")
+        } else {
+            base_name
+        }
+    } else if !base_name.is_empty() {
+        base_name
+    } else {
+        "Audio".to_string()
     }
-    let trimmed = clean.trim().to_string();
-    if !trimmed.is_empty() && trimmed.to_lowercase() != "drc" {
-        return trimmed;
-    }
-    if !l_name.trim().is_empty() {
-        return l_name.trim().to_string();
-    }
-    let mapped = common_lang_name(l_code);
-    if !mapped.is_empty() {
-        return mapped.to_string();
-    }
-    if !l_code.trim().is_empty() {
-        return l_code.trim().to_string();
-    }
-    "Audio".to_string()
 }
 
 #[cfg(test)]
@@ -649,9 +694,62 @@ mod tests {
         assert_eq!(tracks.len(), 1);
         let track = &tracks[0];
         assert_eq!(track.format_id, "251");
-        assert!(track.display_label().contains("Original Audio"));
+        assert!(track.display_label().contains("English (Original)"));
         assert!(track.display_label().contains("webm (opus)"));
         assert!(track.display_label().contains("160 kbps"));
         assert!(track.display_label().contains("[id: 251]"));
+    }
+
+    #[test]
+    fn derive_audio_tracks_detects_multiple_languages() {
+        let payload = json!({
+            "formats": [
+                {
+                    "format_id": "251-en",
+                    "ext": "webm",
+                    "acodec": "opus",
+                    "vcodec": "none",
+                    "abr": 160.0,
+                    "language": "en",
+                    "format_note": "original (default)",
+                    "audio_track": {
+                        "id": "en.default",
+                        "displayName": "English - Original"
+                    }
+                },
+                {
+                    "format_id": "251-es",
+                    "ext": "webm",
+                    "acodec": "opus",
+                    "vcodec": "none",
+                    "abr": 160.0,
+                    "language": "es",
+                    "format_note": "dubbed",
+                    "audio_track": {
+                        "id": "es.dub",
+                        "displayName": "Spanish dubbed"
+                    }
+                },
+                {
+                    "format_id": "251-fr",
+                    "ext": "webm",
+                    "acodec": "opus",
+                    "vcodec": "none",
+                    "abr": 160.0,
+                    "language": "fr",
+                    "format_note": "dubbed",
+                    "audio_track": {
+                        "id": "fr.dub",
+                        "displayName": "French dubbed"
+                    }
+                }
+            ]
+        });
+
+        let tracks = YtDlpService::derive_audio_tracks(&payload);
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(tracks[0].display_label(), "English - Original · webm (opus) · 160 kbps · [id: 251-en]");
+        assert_eq!(tracks[1].display_label(), "Spanish dubbed · webm (opus) · 160 kbps · [id: 251-es]");
+        assert_eq!(tracks[2].display_label(), "French dubbed · webm (opus) · 160 kbps · [id: 251-fr]");
     }
 }

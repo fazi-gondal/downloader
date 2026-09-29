@@ -12,11 +12,16 @@ use crate::models::{
     SubtitleMode,
 };
 use crate::services::FormatBuilder;
-use crate::ui::theme::{BORDER_SUBTLE, SURFACE_ELEVATED};
+use crate::ui::theme::{BORDER_SUBTLE, SURFACE_ELEVATED, SURFACE_INSET};
+
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::ScrollHandle;
 
 pub struct ConfigView {
     state: Entity<AppState>,
     show_format_explorer: bool,
+    subtitles_scroll_handle: ScrollHandle,
+    audio_scroll_handle: ScrollHandle,
 }
 
 impl ConfigView {
@@ -24,6 +29,8 @@ impl ConfigView {
         Self {
             state,
             show_format_explorer: false,
+            subtitles_scroll_handle: ScrollHandle::default(),
+            audio_scroll_handle: ScrollHandle::default(),
         }
     }
 
@@ -763,23 +770,39 @@ impl Render for ConfigView {
                                 )
                                 .when(!available_subs.is_empty(), |v| {
                                     v.child(
-                                        v_flex()
-                                            .max_h(px(160.))
-                                            .overflow_y_scrollbar()
-                                            .gap_1_5()
-                                            .p_1()
-                                            .children(available_subs.into_iter().map(|sub| {
-                                                let code = sub.language.clone();
-                                                let label = sub.display_label();
-                                                let is_checked = opts.subtitle_langs.contains(&code);
-                                                let code_clone = code.clone();
-                                                Checkbox::new(format!("sub-lang-{}", code))
-                                                    .label(label)
-                                                    .checked(is_checked)
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        this.toggle_subtitle_lang(code_clone.clone(), cx);
-                                                    }))
-                                            })),
+                                        div()
+                                            .relative()
+                                            .rounded(cx.theme().radius)
+                                            .bg(SURFACE_INSET)
+                                            .border_1()
+                                            .border_color(BORDER_SUBTLE)
+                                            .child(
+                                                v_flex()
+                                                    .id("subtitles-scroll-box")
+                                                    .max_h(px(180.))
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&self.subtitles_scroll_handle)
+                                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                                    .gap_2()
+                                                    .p_2()
+                                                    .pr_6()
+                                                    .children(available_subs.into_iter().map(|sub| {
+                                                        let code = sub.language.clone();
+                                                        let label = sub.display_label();
+                                                        let is_checked = opts.subtitle_langs.contains(&code);
+                                                        let code_clone = code.clone();
+                                                        Checkbox::new(format!("sub-lang-{}", code))
+                                                            .label(label)
+                                                            .checked(is_checked)
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.toggle_subtitle_lang(code_clone.clone(), cx);
+                                                            }))
+                                                    })),
+                                            )
+                                            .child(
+                                                Scrollbar::vertical(&self.subtitles_scroll_handle)
+                                                    .mode(ScrollbarMode::Always)
+                                            ),
                                     )
                                 }),
                         )
@@ -888,24 +911,40 @@ impl Render for ConfigView {
                                 )
                                 .when(!available_audio.is_empty(), |v| {
                                     v.child(
-                                        v_flex()
-                                            .max_h(px(180.))
-                                            .overflow_y_scrollbar()
-                                            .gap_1_5()
-                                            .p_1()
-                                            .children(available_audio.into_iter().map(|track| {
-                                                let key = track.language.clone().unwrap_or_else(|| track.format_id.clone());
-                                                let label = track.display_label();
-                                                let is_checked = opts.selected_audio_langs.contains(&key)
-                                                    || opts.selected_audio_langs.contains(&track.format_id);
-                                                let key_clone = key.clone();
-                                                Checkbox::new(format!("audio-track-{}", track.format_id))
-                                                    .label(label)
-                                                    .checked(is_checked)
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        this.toggle_audio_lang(key_clone.clone(), cx);
-                                                    }))
-                                            })),
+                                        div()
+                                            .relative()
+                                            .rounded(cx.theme().radius)
+                                            .bg(SURFACE_INSET)
+                                            .border_1()
+                                            .border_color(BORDER_SUBTLE)
+                                            .child(
+                                                v_flex()
+                                                    .id("audio-tracks-scroll-box")
+                                                    .max_h(px(180.))
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&self.audio_scroll_handle)
+                                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                                    .gap_2()
+                                                    .p_2()
+                                                    .pr_6()
+                                                    .children(available_audio.into_iter().map(|track| {
+                                                        let key = track.language.clone().unwrap_or_else(|| track.format_id.clone());
+                                                        let label = track.display_label();
+                                                        let is_checked = opts.selected_audio_langs.contains(&key)
+                                                            || opts.selected_audio_langs.contains(&track.format_id);
+                                                        let key_clone = key.clone();
+                                                        Checkbox::new(format!("audio-track-{}", track.format_id))
+                                                            .label(label)
+                                                            .checked(is_checked)
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.toggle_audio_lang(key_clone.clone(), cx);
+                                                            }))
+                                                    })),
+                                            )
+                                            .child(
+                                                Scrollbar::vertical(&self.audio_scroll_handle)
+                                                    .mode(ScrollbarMode::Always)
+                                            ),
                                     )
                                 }),
                         )
