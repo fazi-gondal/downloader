@@ -94,24 +94,47 @@ impl FormatBuilder {
     }
 
     fn compile_video_audio(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
+        // ── Format selector ─────────────────────────────────────────────────────
         let selector = if !options.selected_audio_langs.is_empty() {
+            // Custom audio track selection: user chose specific track(s) by key
+            // The key is either a language code (e.g. "en") or a raw format ID (e.g. "251-dub-en").
             let video_part = if let Some(ref v) = options.video_format_id {
                 v.clone()
             } else {
                 Self::video_selector(options.resolution, options.fps_filter, false)
             };
-            let audio_selectors: Vec<String> = options.selected_audio_langs.iter().map(|k| {
-                if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && (k.len() == 2 || k.len() == 3 || k.contains('-')) && !k.chars().all(|c| c.is_ascii_digit()) {
-                    format!("ba[language={k}]")
-                } else {
-                    k.clone()
-                }
-            }).collect();
-            let audio_part = audio_selectors.join("+");
+
+            // Detect whether each key looks like a format ID (digits/dashes, >=4 chars)
+            // or a language code (2-3 alpha chars, possibly with country suffix like "en-US").
+            let is_lang_code = |k: &str| -> bool {
+                // A lang code is purely alphabetic (with optional hyphen+country), never all-digits
+                !k.chars().all(|c| c.is_ascii_digit() || c == '-')
+                    && (k.len() == 2 || k.len() == 3
+                        || (k.contains('-') && k.len() <= 8))
+            };
+
+            let audio_parts: Vec<String> = options
+                .selected_audio_langs
+                .iter()
+                .map(|k| {
+                    if is_lang_code(k) {
+                        // Language-based filter: pick best audio for that language
+                        format!("bestaudio[language={k}]")
+                    } else {
+                        // Raw format ID selected directly from the format list
+                        k.clone()
+                    }
+                })
+                .collect();
+
             if options.selected_audio_langs.len() == 1 {
-                format!("{video_part}+{audio_part}/{video_part}+ba/b")
+                // Single track: simple video+audio merge
+                let audio = &audio_parts[0];
+                format!("{video_part}+{audio}/{video_part}+bestaudio/best")
             } else {
-                format!("{video_part}+{audio_part}/{video_part}+mergeall[vcodec=none]/{video_part}+ba/b")
+                // Multiple tracks: chain them all — requires --audio-multistreams
+                let audio_chain = audio_parts.join("+");
+                format!("{video_part}+{audio_chain}/{video_part}+bestaudio/best")
             }
         } else {
             match (&options.video_format_id, &options.audio_format_id) {
@@ -125,6 +148,7 @@ impl FormatBuilder {
             }
         };
 
+        // ── Extra args ──────────────────────────────────────────────────────────
         let ext = options.container.extension().to_string();
         let mut extra = vec![
             "--merge-output-format".into(),
@@ -136,25 +160,56 @@ impl FormatBuilder {
         if options.embed_metadata {
             extra.push("--embed-metadata".into());
         }
+
+        // ── Subtitles ───────────────────────────────────────────────────────────
+        // IMPORTANT: Do NOT use --write-subs here. When --write-subs is present
+        // alongside --embed-subs, yt-dlp treats it as "download AND keep separate
+        // files" — the .vtt/.srt files remain on disk after embedding.
+        // --embed-subs alone is sufficient: it triggers the subtitle download
+        // internally, runs FFmpegEmbedSubtitlePP to merge them into the container,
+        // and then automatically removes the intermediate subtitle files.
         match options.subtitle_mode {
             SubtitleMode::None => {}
             SubtitleMode::All => {
-                extra.push("--write-subs".into());
-                extra.push("--all-subs".into());
+                // Embed ALL subtitles (manual + auto-generated) into the container.
+                // No separate files left behind.
                 extra.push("--embed-subs".into());
+                extra.push("--sub-langs".into());
+                extra.push("all".into());
             }
             SubtitleMode::Custom => {
-                extra.push("--write-subs".into());
-                extra.push("--embed-subs".into());
                 if !options.subtitle_langs.is_empty() {
+                    // Embed only the selected language codes. No separate files.
+                    // Use "en.*,fr.*" pattern so both manual and auto-generated
+                    // variants of each language are included when available.
+                    let langs_pattern = options
+                        .subtitle_langs
+                        .iter()
+                        .map(|l| format!("{l}.*"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    extra.push("--embed-subs".into());
                     extra.push("--sub-langs".into());
-                    extra.push(options.subtitle_langs.join(","));
+                    extra.push(langs_pattern);
                 }
+                // If no langs selected yet, skip — nothing to embed.
             }
         }
-        if options.multi_audio || options.audio_tracks_mode == crate::models::AudioTracksMode::All || options.selected_audio_langs.len() > 1 {
+
+        // ── Multi-audio streams ─────────────────────────────────────────────────
+        // Enable --audio-multistreams whenever more than one audio track is requested.
+        // This flag tells ffmpeg to embed all matched audio tracks into the container.
+        let needs_multistreams = options.multi_audio
+            || options.audio_tracks_mode == crate::models::AudioTracksMode::All
+            || options.selected_audio_langs.len() > 1;
+        if needs_multistreams {
             extra.push("--audio-multistreams".into());
         }
+
+        // When "All Audio Tracks" is selected, override the format selector to
+        // use --audio-multistreams with bestaudio so yt-dlp picks up every track.
+        // (The selector already handles this via video_selector with_audio=true,
+        // but we also need multistreams enabled, which the flag above provides.)
 
         let estimated = Self::estimate_video_size(media, options.resolution, true);
 

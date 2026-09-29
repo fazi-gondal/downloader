@@ -81,6 +81,12 @@ impl ConfigView {
     fn set_subtitle_mode(&mut self, mode: SubtitleMode, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_mode = mode;
+            // Any subtitle selection requires a container that supports embedded subs.
+            // MKV is the universal choice; switch automatically unless user already
+            // chose MKV or the mode is turned off.
+            if mode != SubtitleMode::None && s.current_options.container != Container::Mkv {
+                s.current_options.container = Container::Mkv;
+            }
             cx.notify();
         });
     }
@@ -92,6 +98,12 @@ impl ConfigView {
             } else {
                 s.current_options.subtitle_langs.push(lang);
             }
+            // Auto-switch to MKV as soon as any subtitle lang is selected.
+            if !s.current_options.subtitle_langs.is_empty()
+                && s.current_options.container != Container::Mkv
+            {
+                s.current_options.container = Container::Mkv;
+            }
             cx.notify();
         });
     }
@@ -99,6 +111,12 @@ impl ConfigView {
     fn select_all_subtitles(&mut self, langs: Vec<String>, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_langs = langs;
+            // Multiple subtitle langs → must use MKV.
+            if !s.current_options.subtitle_langs.is_empty()
+                && s.current_options.container != Container::Mkv
+            {
+                s.current_options.container = Container::Mkv;
+            }
             cx.notify();
         });
     }
@@ -121,9 +139,19 @@ impl ConfigView {
                 AudioTracksMode::All => {
                     s.current_options.multi_audio = true;
                     s.current_options.selected_audio_langs.clear();
+                    // All audio tracks → MKV is the only container that handles this.
+                    if s.current_options.container != Container::Mkv {
+                        s.current_options.container = Container::Mkv;
+                    }
                 }
                 AudioTracksMode::Custom => {
                     s.current_options.multi_audio = false;
+                    // If 2+ tracks are already selected, ensure MKV.
+                    if s.current_options.selected_audio_langs.len() >= 2
+                        && s.current_options.container != Container::Mkv
+                    {
+                        s.current_options.container = Container::Mkv;
+                    }
                 }
             }
             cx.notify();
@@ -133,6 +161,12 @@ impl ConfigView {
     fn select_all_audio_tracks(&mut self, tracks: Vec<String>, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.selected_audio_langs = tracks;
+            // 2+ audio tracks → MKV required.
+            if s.current_options.selected_audio_langs.len() >= 2
+                && s.current_options.container != Container::Mkv
+            {
+                s.current_options.container = Container::Mkv;
+            }
             cx.notify();
         });
     }
@@ -147,6 +181,10 @@ impl ConfigView {
     fn toggle_multi_audio(&mut self, checked: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.multi_audio = checked;
+            // Enabling multi-audio requires MKV.
+            if checked && s.current_options.container != Container::Mkv {
+                s.current_options.container = Container::Mkv;
+            }
             cx.notify();
         });
     }
@@ -157,6 +195,12 @@ impl ConfigView {
                 s.current_options.selected_audio_langs.remove(pos);
             } else {
                 s.current_options.selected_audio_langs.push(lang);
+            }
+            // As soon as 2 or more audio tracks are selected, MKV is required.
+            if s.current_options.selected_audio_langs.len() >= 2
+                && s.current_options.container != Container::Mkv
+            {
+                s.current_options.container = Container::Mkv;
             }
             cx.notify();
         });

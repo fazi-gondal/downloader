@@ -1,4 +1,8 @@
 //! About view + dependency inspector (yt-dlp / FFmpeg).
+//!
+//! CLI tool availability is checked automatically when the view is first
+//! created (on app open) and again whenever the user clicks "Check Status".
+//! Both checks run on the background thread so the UI never blocks.
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{h_flex, v_flex, Icon};
@@ -13,31 +17,72 @@ pub struct AboutView {
 }
 
 impl AboutView {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Kick off auto-check immediately so the status shows on first open
+        // without requiring the user to click "Check Status".
+        cx.spawn(async move |this, cx| {
+            // Run both checks concurrently on the background thread.
+            let (ytdlp_result, ffmpeg_result) = cx
+                .background_spawn(async move {
+                    let ytdlp = match YtDlpService::default().check_available() {
+                        Ok(v) => v,
+                        Err(e) => format!("Missing ({})", e),
+                    };
+                    let ffmpeg = match FfmpegService::default().check_available() {
+                        Ok(v) => v,
+                        Err(e) => format!("Missing ({})", e),
+                    };
+                    (ytdlp, ffmpeg)
+                })
+                .await;
+
+            let _ = this.update(cx, |view, cx| {
+                view.ytdlp_status = Some(ytdlp_result);
+                view.ffmpeg_status = Some(ffmpeg_result);
+                view.checking = false;
+                cx.notify();
+            });
+        })
+        .detach();
+
         Self {
             ytdlp_status: None,
             ffmpeg_status: None,
-            checking: false,
+            checking: true, // show spinner while auto-check runs
         }
     }
 
+    /// Trigger a fresh async check (used by the "Check Status" button).
     fn refresh_deps(&mut self, cx: &mut Context<Self>) {
+        if self.checking {
+            return; // already running
+        }
         self.checking = true;
         cx.notify();
 
-        let ytdlp = YtDlpService::default();
-        let ffmpeg = FfmpegService::default();
+        cx.spawn(async move |this, cx| {
+            let (ytdlp_result, ffmpeg_result) = cx
+                .background_spawn(async move {
+                    let ytdlp = match YtDlpService::default().check_available() {
+                        Ok(v) => v,
+                        Err(e) => format!("Missing ({})", e),
+                    };
+                    let ffmpeg = match FfmpegService::default().check_available() {
+                        Ok(v) => v,
+                        Err(e) => format!("Missing ({})", e),
+                    };
+                    (ytdlp, ffmpeg)
+                })
+                .await;
 
-        self.ytdlp_status = match ytdlp.check_available() {
-            Ok(v) => Some(v),
-            Err(e) => Some(format!("Missing ({e})")),
-        };
-        self.ffmpeg_status = match ffmpeg.check_available() {
-            Ok(v) => Some(v),
-            Err(e) => Some(format!("Missing ({e})")),
-        };
-        self.checking = false;
-        cx.notify();
+            let _ = this.update(cx, |view, cx| {
+                view.ytdlp_status = Some(ytdlp_result);
+                view.ffmpeg_status = Some(ffmpeg_result);
+                view.checking = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn open_url(url: &str) {
@@ -62,11 +107,11 @@ impl Render for AboutView {
         let ytdlp_str = self
             .ytdlp_status
             .clone()
-            .unwrap_or_else(|| "Not checked yet".into());
+            .unwrap_or_else(|| "Checking…".into());
         let ffmpeg_str = self
             .ffmpeg_status
             .clone()
-            .unwrap_or_else(|| "Not checked yet".into());
+            .unwrap_or_else(|| "Checking…".into());
 
         let ytdlp_ok = self.ytdlp_status.as_ref().map(|s| !s.starts_with("Missing")).unwrap_or(false);
         let ffmpeg_ok = self.ffmpeg_status.as_ref().map(|s| !s.starts_with("Missing")).unwrap_or(false);
@@ -165,7 +210,11 @@ impl Render for AboutView {
                                         div()
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
-                                            .child("Underlying engines required for extraction and transcoding"),
+                                            .child(if self.checking {
+                                                "Checking availability of CLI engines…"
+                                            } else {
+                                                "Underlying engines required for extraction and transcoding"
+                                            }),
                                     ),
                             )
                             .child(
@@ -173,6 +222,7 @@ impl Render for AboutView {
                                     .primary()
                                     .icon(IconName::RefreshCw)
                                     .label(if self.checking { "Checking…" } else { "Check Status" })
+                                    .disabled(self.checking)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.refresh_deps(cx);
                                     })),
@@ -193,8 +243,30 @@ impl Render for AboutView {
                                 div()
                                     .p_2()
                                     .rounded(px(6.))
-                                    .bg(if ytdlp_ok { cx.theme().success.opacity(0.15) } else { cx.theme().secondary })
-                                    .child(Icon::new(if ytdlp_ok { IconName::Check } else { IconName::CircleAlert }).size(px(18.)).text_color(if ytdlp_ok { cx.theme().success } else { cx.theme().danger })),
+                                    .bg(if self.checking {
+                                        cx.theme().muted
+                                    } else if ytdlp_ok {
+                                        cx.theme().success.opacity(0.15)
+                                    } else {
+                                        cx.theme().secondary
+                                    })
+                                    .child(
+                                        Icon::new(if self.checking {
+                                            IconName::LoaderCircle
+                                        } else if ytdlp_ok {
+                                            IconName::Check
+                                        } else {
+                                            IconName::CircleAlert
+                                        })
+                                        .size(px(18.))
+                                        .text_color(if self.checking {
+                                            cx.theme().muted_foreground
+                                        } else if ytdlp_ok {
+                                            cx.theme().success
+                                        } else {
+                                            cx.theme().danger
+                                        }),
+                                    ),
                             )
                             .child(
                                 v_flex()
@@ -239,8 +311,30 @@ impl Render for AboutView {
                                 div()
                                     .p_2()
                                     .rounded(px(6.))
-                                    .bg(if ffmpeg_ok { cx.theme().success.opacity(0.15) } else { cx.theme().secondary })
-                                    .child(Icon::new(if ffmpeg_ok { IconName::Check } else { IconName::CircleAlert }).size(px(18.)).text_color(if ffmpeg_ok { cx.theme().success } else { cx.theme().danger })),
+                                    .bg(if self.checking {
+                                        cx.theme().muted
+                                    } else if ffmpeg_ok {
+                                        cx.theme().success.opacity(0.15)
+                                    } else {
+                                        cx.theme().secondary
+                                    })
+                                    .child(
+                                        Icon::new(if self.checking {
+                                            IconName::LoaderCircle
+                                        } else if ffmpeg_ok {
+                                            IconName::Check
+                                        } else {
+                                            IconName::CircleAlert
+                                        })
+                                        .size(px(18.))
+                                        .text_color(if self.checking {
+                                            cx.theme().muted_foreground
+                                        } else if ffmpeg_ok {
+                                            cx.theme().success
+                                        } else {
+                                            cx.theme().danger
+                                        }),
+                                    ),
                             )
                             .child(
                                 v_flex()

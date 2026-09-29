@@ -93,7 +93,7 @@ impl AppShell {
                                 .child(
                                     Icon::new(IconName::Download)
                                         .size(px(20.))
-                                        .text_color(crate::ui::theme::TEXT_PRIMARY),
+                                        .text_color(cx.theme().primary_foreground),
                                 ),
                         )
                         .child(
@@ -103,13 +103,13 @@ impl AppShell {
                                     div()
                                         .text_sm()
                                         .font_bold()
-                                        .text_color(crate::ui::theme::TEXT_PRIMARY)
+                                        .text_color(cx.theme().foreground)
                                         .child("Video Downloader"),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(crate::ui::theme::TEXT_MUTED)
+                                        .text_color(cx.theme().muted_foreground)
                                         .child("Pro Studio Suite"),
                                 ),
                         ),
@@ -191,9 +191,9 @@ impl AppShell {
                                 .px_3()
                                 .py_1p5()
                                 .rounded(crate::ui::theme::RADIUS_CONTROL)
-                                .bg(crate::ui::theme::SURFACE_INSET)
+                                .bg(cx.theme().background)
                                 .border_1()
-                                .border_color(crate::ui::theme::BORDER_SUBTLE)
+                                .border_color(cx.theme().border)
                                 .items_center()
                                 .gap_2()
                                 .child(
@@ -210,7 +210,7 @@ impl AppShell {
                                     div()
                                         .text_xs()
                                         .font_medium()
-                                        .text_color(crate::ui::theme::TEXT_MUTED)
+                                        .text_color(cx.theme().muted_foreground)
                                         .child(if ffmpeg_ok {
                                             "ffmpeg: OK"
                                         } else {
