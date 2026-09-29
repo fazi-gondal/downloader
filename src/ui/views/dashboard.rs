@@ -11,10 +11,7 @@ use crate::ui::prelude::*;
 use crate::core::{AppRoute, AppState, CurrentMedia};
 use crate::services::ytdlp::ExtractedInfo;
 use crate::ui::components::media_card::{playlist_media_card, single_media_card};
-use crate::ui::theme::{
-    BORDER_SUBTLE, CORAL, RADIUS_CARD, RADIUS_CONTROL, SURFACE_ELEVATED, TEXT_MUTED,
-    TEXT_PRIMARY,
-};
+use crate::ui::theme::{CORAL, RADIUS_CARD, RADIUS_CONTROL};
 
 pub struct DashboardView {
     state: Entity<AppState>,
@@ -88,15 +85,15 @@ impl Render for DashboardView {
             .max_w(px(640.))
             .p_1p5()
             .rounded(RADIUS_CARD)
-            .bg(SURFACE_ELEVATED)
+            .bg(cx.theme().secondary)
             .border_1()
-            .border_color(BORDER_SUBTLE)
+            .border_color(cx.theme().border)
             .items_center()
             .gap_2()
             .child(
                 div()
                     .pl_3()
-                    .child(Icon::new(IconName::Link).size(px(18.)).text_color(TEXT_MUTED)),
+                    .child(Icon::new(IconName::Link).size(px(18.)).text_color(cx.theme().muted_foreground)),
             )
             .child(div().flex_1().child(Input::new(&self.url_input)))
             .child(
@@ -131,7 +128,7 @@ impl Render for DashboardView {
                                     div()
                                         .text_3xl()
                                         .font_bold()
-                                        .text_color(TEXT_PRIMARY)
+                                        .text_color(cx.theme().foreground)
                                         .child("Extract. Convert. "),
                                 )
                                 .child(
@@ -147,7 +144,7 @@ impl Render for DashboardView {
                                 .max_w(px(520.))
                                 .text_center()
                                 .text_sm()
-                                .text_color(TEXT_MUTED)
+                                .text_color(cx.theme().muted_foreground)
                                 .child("The ultimate media capture suite. Paste a link from any supported platform to start downloading and processing."),
                         ),
                 )
@@ -160,7 +157,7 @@ impl Render for DashboardView {
                             div()
                                 .text_xs()
                                 .font_semibold()
-                                .text_color(TEXT_MUTED)
+                                .text_color(cx.theme().muted_foreground)
                                 .child("SUPPORTED SERVICES"),
                         )
                         .child(
@@ -171,29 +168,29 @@ impl Render for DashboardView {
                                     h_flex()
                                         .gap_1p5()
                                         .items_center()
-                                        .child(Icon::new(IconName::Tv).size(px(16.)).text_color(TEXT_MUTED))
-                                        .child(div().text_sm().text_color(TEXT_MUTED).child("YouTube")),
+                                        .child(Icon::new(IconName::Tv).size(px(16.)).text_color(cx.theme().muted_foreground))
+                                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child("YouTube")),
                                 )
                                 .child(
                                     h_flex()
                                         .gap_1p5()
                                         .items_center()
-                                        .child(Icon::new(IconName::Music).size(px(16.)).text_color(TEXT_MUTED))
-                                        .child(div().text_sm().text_color(TEXT_MUTED).child("TikTok")),
+                                        .child(Icon::new(IconName::Music).size(px(16.)).text_color(cx.theme().muted_foreground))
+                                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child("TikTok")),
                                 )
                                 .child(
                                     h_flex()
                                         .gap_1p5()
                                         .items_center()
-                                        .child(Icon::new(IconName::Camera).size(px(16.)).text_color(TEXT_MUTED))
-                                        .child(div().text_sm().text_color(TEXT_MUTED).child("Instagram")),
+                                        .child(Icon::new(IconName::Camera).size(px(16.)).text_color(cx.theme().muted_foreground))
+                                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Instagram")),
                                 )
                                 .child(
                                     h_flex()
                                         .gap_1p5()
                                         .items_center()
-                                        .child(Icon::new(IconName::Globe).size(px(16.)).text_color(TEXT_MUTED))
-                                        .child(div().text_sm().text_color(TEXT_MUTED).child("Web Streams")),
+                                        .child(Icon::new(IconName::Globe).size(px(16.)).text_color(cx.theme().muted_foreground))
+                                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Web Streams")),
                                 ),
                         ),
                 )
@@ -210,16 +207,16 @@ impl Render for DashboardView {
                         h_flex()
                             .p_4()
                             .rounded(RADIUS_CONTROL)
-                            .bg(SURFACE_ELEVATED)
+                            .bg(cx.theme().secondary)
                             .border_1()
-                            .border_color(BORDER_SUBTLE)
+                            .border_color(cx.theme().border)
                             .items_center()
                             .gap_3()
                             .child(Icon::new(IconName::LoaderCircle).size(px(20.)).text_color(CORAL))
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_color(TEXT_PRIMARY)
+                                    .text_color(cx.theme().foreground)
                                     .child("Analyzing media streams… (fetching metadata via yt-dlp)"),
                             ),
                     )

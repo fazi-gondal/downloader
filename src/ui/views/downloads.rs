@@ -296,10 +296,10 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
     let bar_color = match task.status {
         DownloadStatus::Completed => crate::ui::theme::PILL_GREEN,
         DownloadStatus::Failed => crate::ui::theme::PILL_RED,
-        DownloadStatus::Cancelled => crate::ui::theme::TEXT_MUTED,
+        DownloadStatus::Cancelled => cx.theme().muted_foreground,
         DownloadStatus::Downloading => crate::ui::theme::CORAL,
         DownloadStatus::Processing | DownloadStatus::Analyzing => crate::ui::theme::TEAL_BRIGHT,
-        DownloadStatus::Queued => crate::ui::theme::TEXT_MUTED,
+        DownloadStatus::Queued => cx.theme().muted_foreground,
     };
 
     let size_str = match (task.downloaded_bytes, task.total_bytes) {

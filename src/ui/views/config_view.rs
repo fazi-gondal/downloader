@@ -12,7 +12,7 @@ use crate::models::{
     SubtitleMode,
 };
 use crate::services::FormatBuilder;
-use crate::ui::theme::{BORDER_SUBTLE, SURFACE_ELEVATED, SURFACE_INSET};
+
 
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::ScrollHandle;
@@ -726,9 +726,9 @@ impl Render for ConfigView {
                                 .gap_2()
                                 .p_3()
                                 .rounded(cx.theme().radius)
-                                .bg(SURFACE_ELEVATED)
+                                .bg(cx.theme().secondary)
                                 .border_1()
-                                .border_color(BORDER_SUBTLE)
+                                .border_color(cx.theme().border)
                                 .child(
                                     h_flex()
                                         .justify_between()
@@ -773,9 +773,9 @@ impl Render for ConfigView {
                                         div()
                                             .relative()
                                             .rounded(cx.theme().radius)
-                                            .bg(SURFACE_INSET)
+                                            .bg(cx.theme().background)
                                             .border_1()
-                                            .border_color(BORDER_SUBTLE)
+                                            .border_color(cx.theme().border)
                                             .child(
                                                 v_flex()
                                                     .id("subtitles-scroll-box")
@@ -867,9 +867,9 @@ impl Render for ConfigView {
                                 .gap_2()
                                 .p_3()
                                 .rounded(cx.theme().radius)
-                                .bg(SURFACE_ELEVATED)
+                                .bg(cx.theme().secondary)
                                 .border_1()
-                                .border_color(BORDER_SUBTLE)
+                                .border_color(cx.theme().border)
                                 .child(
                                     h_flex()
                                         .justify_between()
@@ -914,9 +914,9 @@ impl Render for ConfigView {
                                         div()
                                             .relative()
                                             .rounded(cx.theme().radius)
-                                            .bg(SURFACE_INSET)
+                                            .bg(cx.theme().background)
                                             .border_1()
-                                            .border_color(BORDER_SUBTLE)
+                                            .border_color(cx.theme().border)
                                             .child(
                                                 v_flex()
                                                     .id("audio-tracks-scroll-box")
@@ -1192,7 +1192,7 @@ fn render_mode_card(
         .gap_3()
         .items_center()
         .cursor_pointer()
-        .hover(|s| s.bg(crate::ui::theme::SURFACE_HIGHEST))
+        .hover(|s| s.bg(cx.theme().muted))
         .on_mouse_down(
             gpui_kit::MouseButton::Left,
             cx.listener(move |this, _, _, cx| {
