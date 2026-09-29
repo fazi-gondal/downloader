@@ -95,48 +95,91 @@ impl FormatBuilder {
 
     fn compile_video_audio(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
         // ── Format selector ─────────────────────────────────────────────────────
+        // Build the video part of the selector.
+        // "bv*" (any video codec) gives yt-dlp more room to pick good formats;
+        // height/fps filters are appended as attribute filters.
+        let height_filter = match options.resolution.height() {
+            Some(h) => format!("[height<=?{h}]"),
+            None => String::new(),
+        };
+        let fps_filter_str = match options.fps_filter {
+            Some(f) => format!("[fps<=?{f}]"),
+            None => String::new(),
+        };
+        let filters = format!("{height_filter}{fps_filter_str}");
+
         let selector = if !options.selected_audio_langs.is_empty() {
-            // Custom audio track selection: user chose specific track(s) by key
-            // The key is either a language code (e.g. "en") or a raw format ID (e.g. "251-dub-en").
+            // Custom audio track selection — keys are yt-dlp format IDs
+            // (e.g. "251", "140", "233-dub-en") stored from the format list.
             let video_part = if let Some(ref v) = options.video_format_id {
                 v.clone()
+            } else if filters.is_empty() {
+                "bv*".to_string()
             } else {
-                Self::video_selector(options.resolution, options.fps_filter, false)
+                format!("bv*{filters}")
             };
 
-            let audio_parts: Vec<String> = options
-                .selected_audio_langs
-                .iter()
-                .map(|k| k.clone()) // format IDs used directly in the -f string
-                .collect();
+            let audio_chain = options.selected_audio_langs.join("+");
 
             if options.selected_audio_langs.len() == 1 {
-                // Single track: video + that specific audio format ID
-                let audio = &audio_parts[0];
-                format!("{video_part}+{audio}/{video_part}+bestaudio/best")
+                // Single track: try the specific format ID, fall back to best audio.
+                let audio = &options.selected_audio_langs[0];
+                format!("{video_part}+{audio}/{video_part}+ba/b")
             } else {
-                // Multiple tracks: chain all format IDs with +, requires --audio-multistreams
-                // yt-dlp syntax: -f "video+audio1+audio2" --audio-multistreams
-                let audio_chain = audio_parts.join("+");
-                format!("{video_part}+{audio_chain}/{video_part}+bestaudio/best")
+                // Multiple tracks: chain all format IDs with --audio-multistreams.
+                // Fallback 1: mergeall grabs every audio stream yt-dlp finds.
+                // Fallback 2: single best audio so the download never fails.
+                format!(
+                    "{video_part}+{audio_chain}\
+/{video_part}+mergeall[vcodec=none]\
+/{video_part}+ba/b"
+                )
             }
         } else {
             match (&options.video_format_id, &options.audio_format_id) {
                 (Some(v), Some(a)) => format!("{v}+{a}"),
-                (Some(v), None) => format!("{v}+bestaudio/best"),
-                (None, Some(a)) => {
-                    let base = Self::video_selector(options.resolution, options.fps_filter, false);
-                    format!("{base}+{a}")
+                (Some(v), None)    => format!("{v}+ba/b"),
+                (None,    Some(a)) => {
+                    let vp = if filters.is_empty() { "bv*".to_string() } else { format!("bv*{filters}") };
+                    format!("{vp}+{a}")
                 }
-                (None, None) => Self::video_selector(options.resolution, options.fps_filter, true),
+                (None, None) => {
+                    // "All Audio Tracks" mode: mergeall grabs every available audio stream.
+                    if options.multi_audio
+                        || options.audio_tracks_mode == crate::models::AudioTracksMode::All
+                    {
+                        if filters.is_empty() {
+                            "bv*+mergeall[vcodec=none]/b".to_string()
+                        } else {
+                            format!("bv*{filters}+mergeall[vcodec=none]/b{filters}/b")
+                        }
+                    } else if filters.is_empty() {
+                        "bv*+ba/b".to_string()
+                    } else {
+                        format!("bv*{filters}+ba/b{filters}/b")
+                    }
+                }
             }
         };
 
-        // ── Extra args ──────────────────────────────────────────────────────────
-        let ext = options.container.extension().to_string();
+        // ── Container ───────────────────────────────────────────────────────────
+        // Force MKV when multiple audio tracks or subtitles are involved;
+        // MP4/WebM silently drop extra streams during FFmpeg merge.
+        let is_multi_audio = options.multi_audio
+            || options.audio_tracks_mode == crate::models::AudioTracksMode::All
+            || options.selected_audio_langs.len() > 1;
+        let has_subs = options.subtitle_mode != SubtitleMode::None
+            && (options.subtitle_mode == SubtitleMode::All
+                || !options.subtitle_langs.is_empty());
+        let effective_ext = if is_multi_audio || has_subs {
+            "mkv".to_string()
+        } else {
+            options.container.extension().to_string()
+        };
+
         let mut extra = vec![
             "--merge-output-format".into(),
-            ext.clone(),
+            effective_ext.clone(),
         ];
         if options.embed_thumbnail {
             extra.push("--embed-thumbnail".into());
@@ -146,54 +189,43 @@ impl FormatBuilder {
         }
 
         // ── Subtitles ───────────────────────────────────────────────────────────
-        // IMPORTANT: Do NOT use --write-subs here. When --write-subs is present
-        // alongside --embed-subs, yt-dlp treats it as "download AND keep separate
-        // files" — the .vtt/.srt files remain on disk after embedding.
-        // --embed-subs alone is sufficient: it triggers the subtitle download
-        // internally, runs FFmpegEmbedSubtitlePP to merge them into the container,
-        // and then automatically removes the intermediate subtitle files.
+        // Reference approach (Python format_builder.py):
+        //   writesubtitles + writeautomaticsub + subtitleslangs + FFmpegEmbedSubtitle PP.
+        // CLI: --write-subs --write-auto-subs --embed-subs --sub-langs LANGS
+        // yt-dlp's FFmpegEmbedSubtitlePP embeds then deletes the .vtt/.srt files.
         match options.subtitle_mode {
             SubtitleMode::None => {}
             SubtitleMode::All => {
-                // Embed ALL subtitles (manual + auto-generated) into the container.
-                // No separate files left behind.
+                extra.push("--write-subs".into());
+                extra.push("--write-auto-subs".into());
                 extra.push("--embed-subs".into());
                 extra.push("--sub-langs".into());
                 extra.push("all".into());
             }
             SubtitleMode::Custom => {
                 if !options.subtitle_langs.is_empty() {
-                    // Embed only the selected subtitle language codes. No separate files.
-                    // yt-dlp comma-separated list: "en,fr,de"
+                    extra.push("--write-subs".into());
+                    extra.push("--write-auto-subs".into());
                     extra.push("--embed-subs".into());
                     extra.push("--sub-langs".into());
                     extra.push(options.subtitle_langs.join(","));
                 }
-                // If no langs selected, skip — nothing to embed.
             }
         }
 
-        // ── Multi-audio streams ─────────────────────────────────────────────────
-        // Enable --audio-multistreams whenever more than one audio track is requested.
-        // This flag tells ffmpeg to embed all matched audio tracks into the container.
-        let needs_multistreams = options.multi_audio
-            || options.audio_tracks_mode == crate::models::AudioTracksMode::All
-            || options.selected_audio_langs.len() > 1;
-        if needs_multistreams {
+        // ── Multi-audio streams ──────────────────────────────────────────────────
+        // --audio-multistreams tells FFmpeg to keep every audio stream during merge.
+        // Without it only the first audio stream survives.
+        if is_multi_audio {
             extra.push("--audio-multistreams".into());
         }
-
-        // When "All Audio Tracks" is selected, override the format selector to
-        // use --audio-multistreams with bestaudio so yt-dlp picks up every track.
-        // (The selector already handles this via video_selector with_audio=true,
-        // but we also need multistreams enabled, which the flag above provides.)
 
         let estimated = Self::estimate_video_size(media, options.resolution, true);
 
         CompiledFormat {
             format_selector: selector,
             extra_args: extra,
-            output_ext: ext,
+            output_ext: effective_ext,
             estimated_size: estimated,
         }
     }
