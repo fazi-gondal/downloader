@@ -52,8 +52,11 @@ impl ConverterView {
                     Write-Output $f.FileName
                 }
             "#;
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             let out = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-Command", script])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
 
             if let Ok(output) = out {

@@ -365,6 +365,22 @@ impl DownloadManager {
                 r.insert(id, pid);
             }
 
+            // Drain stderr in background thread to prevent OS pipe buffer deadlocks
+            // and capture diagnostic error messages if yt-dlp fails.
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    let mut last_lines = std::collections::VecDeque::with_capacity(30);
+                    for line in reader.lines().flatten() {
+                        if last_lines.len() >= 30 {
+                            last_lines.pop_front();
+                        }
+                        last_lines.push_back(line);
+                    }
+                    last_lines.into_iter().collect::<Vec<_>>().join("\n")
+                })
+            });
+
             // Parse stdout progress
             if let Some(stdout) = child.stdout.take() {
                 let reader = BufReader::new(stdout);
@@ -405,6 +421,13 @@ impl DownloadManager {
                                 t.output_path = Some(path.to_string());
                             }
                         }
+                    } else if line.starts_with("[EmbedSubtitle] Embedding subtitles in ") {
+                        let path = line.trim_start_matches("[EmbedSubtitle] Embedding subtitles in ").trim().trim_matches('"');
+                        if let Ok(mut map) = tasks.lock() {
+                            if let Some(t) = map.get_mut(&id) {
+                                t.output_path = Some(path.to_string());
+                            }
+                        }
                     }
 
                     if let Some((pct, speed, eta, downloaded, total)) = parse_progress_line(&line) {
@@ -426,6 +449,9 @@ impl DownloadManager {
             }
 
             let status = child.wait();
+            let stderr_output = stderr_handle
+                .and_then(|h| h.join().ok())
+                .unwrap_or_default();
             let _ = running.lock().map(|mut r| r.remove(&id));
 
             if let Ok(mut map) = tasks.lock() {
@@ -438,7 +464,14 @@ impl DownloadManager {
                     } else {
                         t.status = DownloadStatus::Failed;
                         if t.error.is_none() {
-                            t.error = Some("yt-dlp exited with error".into());
+                            let trimmed = stderr_output.trim();
+                            let error_line = trimmed
+                                .lines()
+                                .rev()
+                                .find(|l| l.contains("ERROR:") || l.contains("error:"))
+                                .or_else(|| trimmed.lines().rev().find(|l| !l.trim().is_empty()))
+                                .unwrap_or("yt-dlp exited with error");
+                            t.error = Some(error_line.to_string());
                         }
                     }
                 }

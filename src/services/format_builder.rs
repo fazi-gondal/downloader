@@ -180,6 +180,8 @@ impl FormatBuilder {
         let mut extra = vec![
             "--merge-output-format".into(),
             effective_ext.clone(),
+            "--remux-video".into(),
+            effective_ext.clone(),
         ];
         if options.embed_thumbnail {
             extra.push("--embed-thumbnail".into());
@@ -189,26 +191,42 @@ impl FormatBuilder {
         }
 
         // ── Subtitles ───────────────────────────────────────────────────────────
-        // Reference approach (Python format_builder.py):
-        //   writesubtitles + writeautomaticsub + subtitleslangs + FFmpegEmbedSubtitle PP.
-        // CLI: --write-subs --write-auto-subs --embed-subs --sub-langs LANGS
-        // yt-dlp's FFmpegEmbedSubtitlePP embeds then deletes the .vtt/.srt files.
+        // Strategy:
+        //   All  mode  → fetch uploaded + auto-generated subtitles for all languages
+        //   Custom mode → fetch ONLY the exact language codes selected by the user
+        //
+        // IMPORTANT: Do NOT use --write-subs (permanently keeps .vtt files on disk).
+        //            Do NOT use --write-auto-subs in Custom mode — it causes yt-dlp
+        //            to fetch every auto-generated variant (100s of requests) which
+        //            triggers HTTP 429 (Too Many Requests) from YouTube.
+        //
+        // With --embed-subs (and no --write-subs), yt-dlp automatically deletes the
+        // intermediate .vtt files after embedding them into the video.
         match options.subtitle_mode {
             SubtitleMode::None => {}
             SubtitleMode::All => {
-                extra.push("--write-subs".into());
-                extra.push("--write-auto-subs".into());
+                // All mode: grab uploaded + auto-generated for every language.
+                // Add a 1-second delay between subtitle requests to avoid 429s.
                 extra.push("--embed-subs".into());
+                extra.push("--write-auto-subs".into());
                 extra.push("--sub-langs".into());
                 extra.push("all".into());
+                extra.push("--sleep-subtitles".into());
+                extra.push("1".into());
             }
             SubtitleMode::Custom => {
-                if !options.subtitle_langs.is_empty() {
-                    extra.push("--write-subs".into());
-                    extra.push("--write-auto-subs".into());
+                let clean_langs: Vec<String> = options
+                    .subtitle_langs
+                    .iter()
+                    .filter(|l| *l != "all" && !l.trim().is_empty())
+                    .cloned()
+                    .collect();
+                if !clean_langs.is_empty() {
+                    // Custom mode: embed only the exact languages; skip auto-subs
+                    // to avoid the 429 rate-limit burst that --write-auto-subs causes.
                     extra.push("--embed-subs".into());
                     extra.push("--sub-langs".into());
-                    extra.push(options.subtitle_langs.join(","));
+                    extra.push(clean_langs.join(","));
                 }
             }
         }
@@ -389,7 +407,7 @@ mod tests {
         let media = sample_media();
         let opts = DownloadOptions::default();
         let compiled = FormatBuilder::compile(&media, &opts);
-        assert!(compiled.format_selector.contains("bestvideo"));
+        assert!(compiled.format_selector.contains("bv*"));
         assert!(compiled.estimated_size.is_some());
     }
 
@@ -409,5 +427,53 @@ mod tests {
         assert_eq!(FormatBuilder::format_size(None), "—");
         assert_eq!(FormatBuilder::format_size(Some(500)), "500 B");
         assert!(FormatBuilder::format_size(Some(5_000_000)).contains("MB"));
+    }
+
+    #[test]
+    fn multi_audio_selection_generates_multistreams_and_mkv() {
+        let media = sample_media();
+        let mut opts = DownloadOptions::default();
+        opts.selected_audio_langs = vec!["251".to_string(), "140".to_string()];
+        let compiled = FormatBuilder::compile(&media, &opts);
+
+        assert_eq!(compiled.output_ext, "mkv");
+        assert!(compiled.format_selector.contains("251+140"));
+        assert!(compiled.format_selector.contains("mergeall[vcodec=none]"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--audio-multistreams"));
+    }
+
+    #[test]
+    fn subtitle_selection_generates_correct_flags_and_mkv() {
+        let media = sample_media();
+        let mut opts = DownloadOptions::default();
+        opts.subtitle_mode = SubtitleMode::Custom;
+        opts.subtitle_langs = vec!["en".to_string(), "es".to_string()];
+        let compiled = FormatBuilder::compile(&media, &opts);
+
+        assert_eq!(compiled.output_ext, "mkv");
+        // Custom mode: embed-subs + exact sub-langs, but NO write-auto-subs or write-subs
+        // (those trigger HTTP 429 rate-limit errors from YouTube)
+        assert!(compiled.extra_args.iter().any(|a| a == "--embed-subs"));
+        assert!(!compiled.extra_args.iter().any(|a| a == "--write-subs"));
+        assert!(!compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
+
+        let sub_langs_idx = compiled.extra_args.iter().position(|a| a == "--sub-langs");
+        assert!(sub_langs_idx.is_some());
+        assert_eq!(compiled.extra_args[sub_langs_idx.unwrap() + 1], "en,es");
+    }
+
+    #[test]
+    fn subtitle_all_mode_includes_auto_subs_and_sleep() {
+        let media = sample_media();
+        let mut opts = DownloadOptions::default();
+        opts.subtitle_mode = SubtitleMode::All;
+        opts.subtitle_langs = vec!["all".to_string()];
+        let compiled = FormatBuilder::compile(&media, &opts);
+
+        assert_eq!(compiled.output_ext, "mkv");
+        assert!(compiled.extra_args.iter().any(|a| a == "--embed-subs"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--sleep-subtitles"));
+        assert!(!compiled.extra_args.iter().any(|a| a == "--write-subs"));
     }
 }

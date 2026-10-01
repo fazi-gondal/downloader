@@ -26,11 +26,15 @@ pub struct AppShell {
     history: Entity<HistoryView>,
     settings: Entity<SettingsView>,
     about: Entity<AboutView>,
+    ffmpeg_ok: bool,
 }
 
 impl AppShell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.new(|_| AppState::new());
+        let ffmpeg_ok = crate::services::FfmpegService::default()
+            .check_available()
+            .is_ok();
 
         Self {
             route: AppRoute::Dashboard,
@@ -42,6 +46,7 @@ impl AppShell {
             history: cx.new(|cx| HistoryView::new(window, state.clone(), cx)),
             settings: cx.new(|cx| SettingsView::new(window, state.clone(), cx)),
             about: cx.new(|cx| AboutView::new(window, cx)),
+            ffmpeg_ok,
         }
     }
 
@@ -71,9 +76,7 @@ impl AppShell {
             "Downloads".to_string()
         };
 
-        let ffmpeg_ok = crate::services::FfmpegService::default()
-            .check_available()
-            .is_ok();
+        let ffmpeg_ok = self.ffmpeg_ok;
 
         Sidebar::new("app-sidebar")
             .w(px(240.))

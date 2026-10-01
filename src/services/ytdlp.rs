@@ -518,10 +518,17 @@ impl YtDlpService {
     }
 
     pub fn check_available(&self) -> Result<String> {
-        let output = std::process::Command::new(&self.binary)
-            .arg("--version")
+        let mut cmd = std::process::Command::new(&self.binary);
+        cmd.arg("--version")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = cmd
             .output()
             .map_err(|e| AppError::ytdlp(format!("yt-dlp not found: {e}")))?;
 

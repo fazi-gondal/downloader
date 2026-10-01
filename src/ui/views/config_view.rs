@@ -81,9 +81,17 @@ impl ConfigView {
     fn set_subtitle_mode(&mut self, mode: SubtitleMode, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_mode = mode;
-            // Any subtitle selection requires a container that supports embedded subs.
-            // MKV is the universal choice; switch automatically unless user already
-            // chose MKV or the mode is turned off.
+            match mode {
+                SubtitleMode::None => {
+                    s.current_options.subtitle_langs.clear();
+                }
+                SubtitleMode::All => {
+                    s.current_options.subtitle_langs = vec!["all".to_string()];
+                }
+                SubtitleMode::Custom => {
+                    s.current_options.subtitle_langs.retain(|l| l != "all");
+                }
+            }
             if mode != SubtitleMode::None && s.current_options.container != Container::Mkv {
                 s.current_options.container = Container::Mkv;
             }
@@ -93,15 +101,16 @@ impl ConfigView {
 
     fn toggle_subtitle_lang(&mut self, lang: String, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
+            s.current_options.subtitle_mode = SubtitleMode::Custom;
+            s.current_options.subtitle_langs.retain(|l| l != "all");
             if let Some(pos) = s.current_options.subtitle_langs.iter().position(|l| l == &lang) {
                 s.current_options.subtitle_langs.remove(pos);
             } else {
                 s.current_options.subtitle_langs.push(lang);
             }
-            // Auto-switch to MKV as soon as any subtitle lang is selected.
-            if !s.current_options.subtitle_langs.is_empty()
-                && s.current_options.container != Container::Mkv
-            {
+            if s.current_options.subtitle_langs.is_empty() {
+                s.current_options.subtitle_mode = SubtitleMode::None;
+            } else if s.current_options.container != Container::Mkv {
                 s.current_options.container = Container::Mkv;
             }
             cx.notify();
@@ -110,8 +119,8 @@ impl ConfigView {
 
     fn select_all_subtitles(&mut self, langs: Vec<String>, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
-            s.current_options.subtitle_langs = langs;
-            // Multiple subtitle langs → must use MKV.
+            s.current_options.subtitle_mode = SubtitleMode::Custom;
+            s.current_options.subtitle_langs = langs.into_iter().filter(|l| l != "all").collect();
             if !s.current_options.subtitle_langs.is_empty()
                 && s.current_options.container != Container::Mkv
             {
@@ -124,6 +133,7 @@ impl ConfigView {
     fn clear_subtitles(&mut self, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_langs.clear();
+            s.current_options.subtitle_mode = SubtitleMode::None;
             cx.notify();
         });
     }

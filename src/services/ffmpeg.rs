@@ -31,10 +31,17 @@ impl FfmpegService {
 
     /// Return ffmpeg version string or error if missing.
     pub fn check_available(&self) -> Result<String> {
-        let output = Command::new(&self.binary)
-            .arg("-version")
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("-version")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = cmd
             .output()
             .map_err(|e| AppError::Ffmpeg(format!("ffmpeg not found: {e}")))?;
 
@@ -49,17 +56,24 @@ impl FfmpegService {
 
     /// Lossless remux / container change when codecs are compatible.
     pub fn remux(&self, input: &Path, output: &Path) -> Result<()> {
-        let status = Command::new(&self.binary)
-            .args([
-                "-y",
-                "-i",
-                input.to_str().unwrap_or(""),
-                "-c",
-                "copy",
-                output.to_str().unwrap_or(""),
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+        let mut cmd = Command::new(&self.binary);
+        cmd.args([
+            "-y",
+            "-i",
+            input.to_str().unwrap_or(""),
+            "-c",
+            "copy",
+            output.to_str().unwrap_or(""),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let status = cmd
             .status()
             .map_err(|e| AppError::Ffmpeg(e.to_string()))?;
 
@@ -105,6 +119,13 @@ impl FfmpegService {
 
         cmd.arg(output);
 
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let status = cmd
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -120,10 +141,17 @@ impl FfmpegService {
 
     /// Run arbitrary ffmpeg args (used by ConversionService).
     pub fn run_args(&self, args: &[&str]) -> Result<()> {
-        let status = Command::new(&self.binary)
-            .args(args)
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(args)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let status = cmd
             .status()
             .map_err(|e| AppError::Ffmpeg(e.to_string()))?;
 

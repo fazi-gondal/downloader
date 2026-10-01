@@ -57,7 +57,7 @@ impl Default for AppSettings {
             rate_limit_kbps: 0,
             keep_originals: true,
             write_subtitles: false,
-            subtitle_langs: vec!["all".into()],
+            subtitle_langs: Vec::new(),
             multi_audio: false,
             embed_thumbnail: true,
             embed_metadata: true,

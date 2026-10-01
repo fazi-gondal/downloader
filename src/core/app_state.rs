@@ -33,10 +33,15 @@ impl AppState {
         let mut current_options = DownloadOptions::default();
         if settings.write_subtitles {
             current_options.subtitle_mode = SubtitleMode::All;
+            current_options.subtitle_langs = if settings.subtitle_langs.is_empty() {
+                vec!["all".to_string()]
+            } else {
+                settings.subtitle_langs.clone()
+            };
         } else {
             current_options.subtitle_mode = SubtitleMode::None;
+            current_options.subtitle_langs = Vec::new();
         }
-        current_options.subtitle_langs = settings.subtitle_langs.clone();
         current_options.multi_audio = settings.multi_audio;
         current_options.embed_thumbnail = settings.embed_thumbnail;
         current_options.embed_metadata = settings.embed_metadata;
