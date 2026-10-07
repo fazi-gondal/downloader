@@ -2,6 +2,8 @@
 
 **High-performance desktop media downloader & transcoder**
 
+*Still Under Development*
+
 Built with **[GPUI-kit](https://gpui-kit.com)** (Rust native UI framework), **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** (media extraction engine), and **[FFmpeg](https://ffmpeg.org)** (merging, remuxing, conversion).
 
 A full Rust rewrite of the original [Video-Downloader](https://github.com/fazi-gondal/Video-Downloader) (Python + Flet) — preserving all features and architecture while delivering native performance and a polished desktop experience.
