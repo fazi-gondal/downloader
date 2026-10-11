@@ -126,23 +126,13 @@ impl FormatBuilder {
             let audio_chain = options.selected_audio_langs.join("+");
 
             if options.selected_audio_langs.len() == 1 {
-                // Single track: try the specific format ID, fall back to best audio.
+                // Exact selection: do not fall back to a different audio stream.
                 let audio = &options.selected_audio_langs[0];
-                format!(
-                    "{}/{}/b",
-                    Self::append_to_candidates(&video_parts, audio),
-                    Self::append_to_candidates(&video_parts, "ba")
-                )
+                Self::append_to_candidates(&video_parts, audio)
             } else {
-                // Multiple tracks: chain all format IDs with --audio-multistreams.
-                // Fallback 1: mergeall grabs every audio stream yt-dlp finds.
-                // Fallback 2: single best audio so the download never fails.
-                format!(
-                    "{}/{}/{}/b",
-                    Self::append_to_candidates(&video_parts, &audio_chain),
-                    Self::append_to_candidates(&video_parts, "mergeall[vcodec=none]"),
-                    Self::append_to_candidates(&video_parts, "ba")
-                )
+                // Exact selection: chain only the requested IDs. If an ID is
+                // stale, fail rather than silently downloading another track.
+                Self::append_to_candidates(&video_parts, &audio_chain)
             }
         } else {
             match (&options.video_format_id, &options.audio_format_id) {
@@ -175,8 +165,13 @@ impl FormatBuilder {
         let is_multi_audio = options.multi_audio
             || options.audio_tracks_mode == crate::models::AudioTracksMode::All
             || options.selected_audio_langs.len() > 1;
-        let has_subs = options.subtitle_mode != SubtitleMode::None
-            && (options.subtitle_mode == SubtitleMode::All || !options.subtitle_langs.is_empty());
+        let uploaded_langs = Self::clean_subtitle_languages(&options.subtitle_langs);
+        let automatic_langs = Self::clean_subtitle_languages(&options.automatic_subtitle_langs);
+        let has_subs = match options.subtitle_mode {
+            SubtitleMode::None => false,
+            SubtitleMode::All => true,
+            SubtitleMode::Custom => !uploaded_langs.is_empty() || !automatic_langs.is_empty(),
+        };
         let effective_ext = if is_multi_audio || has_subs {
             "mkv".to_string()
         } else {
@@ -197,22 +192,15 @@ impl FormatBuilder {
         }
 
         // ── Subtitles ───────────────────────────────────────────────────────────
-        // Strategy:
-        //   All  mode  → fetch uploaded + auto-generated subtitles for all languages
-        //   Custom mode → fetch ONLY the exact language codes selected by the user
-        //
-        // IMPORTANT: Do NOT use --write-subs (permanently keeps .vtt files on disk).
-        //            Custom mode uses --sub-langs together with --write-auto-subs
-        //            so an explicitly selected automatic caption is available.
-        //
-        // With --embed-subs (and no --write-subs), yt-dlp automatically deletes the
-        // intermediate .vtt files after embedding them into the video.
+        // Request only the source types selected by the user. yt-dlp accepts a
+        // single language filter shared by uploaded and automatic subtitles.
         match options.subtitle_mode {
             SubtitleMode::None => {}
             SubtitleMode::All => {
                 // All mode: grab uploaded + auto-generated for every language.
                 // Add a 1-second delay between subtitle requests to avoid 429s.
                 extra.push("--embed-subs".into());
+                extra.push("--write-subs".into());
                 extra.push("--write-auto-subs".into());
                 extra.push("--sub-langs".into());
                 extra.push("all".into());
@@ -220,20 +208,22 @@ impl FormatBuilder {
                 extra.push("1".into());
             }
             SubtitleMode::Custom => {
-                let clean_langs: Vec<String> = options
-                    .subtitle_langs
-                    .iter()
-                    .filter(|l| *l != "all" && !l.trim().is_empty())
-                    .cloned()
-                    .collect();
-                if !clean_langs.is_empty() {
-                    // Custom mode: embed only the exact languages, including
-                    // automatic captions when the selected language is only
-                    // available through `automatic_captions`.
+                if has_subs {
                     extra.push("--embed-subs".into());
-                    extra.push("--write-auto-subs".into());
+                    if !uploaded_langs.is_empty() {
+                        extra.push("--write-subs".into());
+                    }
+                    if !automatic_langs.is_empty() {
+                        extra.push("--write-auto-subs".into());
+                    }
+                    let mut languages = uploaded_langs;
+                    for lang in automatic_langs {
+                        if !languages.contains(&lang) {
+                            languages.push(lang);
+                        }
+                    }
                     extra.push("--sub-langs".into());
-                    extra.push(clean_langs.join(","));
+                    extra.push(languages.join(","));
                 }
             }
         }
@@ -254,6 +244,17 @@ impl FormatBuilder {
             output_ext: effective_ext,
             estimated_size: estimated,
         }
+    }
+
+    fn clean_subtitle_languages(langs: &[String]) -> Vec<String> {
+        let mut clean = Vec::new();
+        for lang in langs {
+            let lang = lang.trim();
+            if !lang.is_empty() && lang != "all" && !clean.iter().any(|item| item == lang) {
+                clean.push(lang.to_string());
+            }
+        }
+        clean
     }
 
     fn video_selector(res: ResolutionPreset, fps: Option<u32>, prefer_vp9: bool) -> String {
@@ -548,15 +549,94 @@ mod tests {
         let compiled = FormatBuilder::compile(&media, &opts);
 
         assert_eq!(compiled.output_ext, "mkv");
-        // Custom mode: embed-subs + exact sub-langs, including automatic captions.
-        // The language filter prevents downloading every automatic-caption variant.
         assert!(compiled.extra_args.iter().any(|a| a == "--embed-subs"));
-        assert!(!compiled.extra_args.iter().any(|a| a == "--write-subs"));
-        assert!(compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--write-subs"));
+        assert!(!compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
 
         let sub_langs_idx = compiled.extra_args.iter().position(|a| a == "--sub-langs");
         assert!(sub_langs_idx.is_some());
         assert_eq!(compiled.extra_args[sub_langs_idx.unwrap() + 1], "en,es");
+    }
+
+    #[test]
+    fn automatic_only_requests_no_uploaded_subtitles() {
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::Custom,
+            automatic_subtitle_langs: vec!["en".into()],
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile_without_media(&opts);
+        assert_eq!(compiled.output_ext, "mkv");
+        assert!(compiled.extra_args.contains(&"--embed-subs".into()));
+        assert!(compiled.extra_args.contains(&"--write-auto-subs".into()));
+        assert!(!compiled.extra_args.contains(&"--write-subs".into()));
+        let index = compiled
+            .extra_args
+            .iter()
+            .position(|arg| arg == "--sub-langs")
+            .unwrap();
+        assert_eq!(compiled.extra_args[index + 1], "en");
+    }
+
+    #[test]
+    fn mixed_sources_deduplicate_languages_in_stable_order() {
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::Custom,
+            subtitle_langs: vec!["en".into(), "es".into(), "en".into()],
+            automatic_subtitle_langs: vec!["en".into(), "fr".into(), "fr".into()],
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile_without_media(&opts);
+        assert_eq!(compiled.output_ext, "mkv");
+        assert!(compiled.extra_args.contains(&"--embed-subs".into()));
+        assert!(compiled.extra_args.contains(&"--write-subs".into()));
+        assert!(compiled.extra_args.contains(&"--write-auto-subs".into()));
+        assert_eq!(
+            compiled
+                .extra_args
+                .iter()
+                .filter(|arg| *arg == "--sub-langs")
+                .count(),
+            1
+        );
+        let index = compiled
+            .extra_args
+            .iter()
+            .position(|arg| arg == "--sub-langs")
+            .unwrap();
+        assert_eq!(compiled.extra_args[index + 1], "en,es,fr");
+    }
+
+    #[test]
+    fn no_subtitles_requests_neither_source_even_with_stale_languages() {
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::None,
+            subtitle_langs: vec!["en".into()],
+            automatic_subtitle_langs: vec!["fr".into()],
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile_without_media(&opts);
+        assert_eq!(compiled.output_ext, "mp4");
+        for flag in [
+            "--embed-subs",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+        ] {
+            assert!(!compiled.extra_args.iter().any(|arg| arg == flag));
+        }
+    }
+
+    #[test]
+    fn empty_custom_selection_does_not_force_mkv_or_embed() {
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::Custom,
+            subtitle_langs: vec!["all".into(), " ".into()],
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile_without_media(&opts);
+        assert_eq!(compiled.output_ext, "mp4");
+        assert!(!compiled.extra_args.contains(&"--embed-subs".into()));
     }
 
     #[test]
@@ -571,8 +651,14 @@ mod tests {
 
         assert_eq!(compiled.output_ext, "mkv");
         assert!(compiled.extra_args.iter().any(|a| a == "--embed-subs"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--write-subs"));
         assert!(compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
         assert!(compiled.extra_args.iter().any(|a| a == "--sleep-subtitles"));
-        assert!(!compiled.extra_args.iter().any(|a| a == "--write-subs"));
+        let index = compiled
+            .extra_args
+            .iter()
+            .position(|arg| arg == "--sub-langs")
+            .unwrap();
+        assert_eq!(compiled.extra_args[index + 1], "all");
     }
 }

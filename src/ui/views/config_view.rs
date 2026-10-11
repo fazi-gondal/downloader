@@ -9,7 +9,7 @@ use gpui_kit::component::{Icon, h_flex, v_flex};
 use crate::core::{AppState, CurrentMedia};
 use crate::models::{
     AudioFormat, AudioQualityPreset, AudioTracksMode, Container, DownloadMode, ResolutionPreset,
-    StreamType, SubtitleMode,
+    StreamType, SubtitleMode, SubtitleTrack,
 };
 use crate::services::FormatBuilder;
 
@@ -83,12 +83,17 @@ impl ConfigView {
             match mode {
                 SubtitleMode::None => {
                     s.current_options.subtitle_langs.clear();
+                    s.current_options.automatic_subtitle_langs.clear();
                 }
                 SubtitleMode::All => {
-                    s.current_options.subtitle_langs = vec!["all".to_string()];
+                    s.current_options.subtitle_langs.clear();
+                    s.current_options.automatic_subtitle_langs.clear();
                 }
                 SubtitleMode::Custom => {
                     s.current_options.subtitle_langs.retain(|l| l != "all");
+                    s.current_options
+                        .automatic_subtitle_langs
+                        .retain(|l| l != "all");
                 }
             }
             if mode != SubtitleMode::None && s.current_options.container != Container::Mkv {
@@ -98,21 +103,41 @@ impl ConfigView {
         });
     }
 
-    fn toggle_subtitle_lang(&mut self, lang: String, cx: &mut Context<Self>) {
+    fn toggle_subtitle_lang(
+        &mut self,
+        track: SubtitleTrack,
+        available: Vec<SubtitleTrack>,
+        cx: &mut Context<Self>,
+    ) {
         self.state.update(cx, |s, cx| {
+            if s.current_options.subtitle_mode == SubtitleMode::All {
+                // Switching from All to Custom should deselect just this source/language.
+                s.current_options.subtitle_langs = available
+                    .iter()
+                    .filter(|sub| !sub.is_automatic)
+                    .map(|sub| sub.language.clone())
+                    .collect();
+                s.current_options.automatic_subtitle_langs = available
+                    .iter()
+                    .filter(|sub| sub.is_automatic)
+                    .map(|sub| sub.language.clone())
+                    .collect();
+            }
             s.current_options.subtitle_mode = SubtitleMode::Custom;
             s.current_options.subtitle_langs.retain(|l| l != "all");
-            if let Some(pos) = s
-                .current_options
-                .subtitle_langs
-                .iter()
-                .position(|l| l == &lang)
-            {
-                s.current_options.subtitle_langs.remove(pos);
+            let langs = if track.is_automatic {
+                &mut s.current_options.automatic_subtitle_langs
             } else {
-                s.current_options.subtitle_langs.push(lang);
+                &mut s.current_options.subtitle_langs
+            };
+            if langs.iter().any(|l| l == &track.language) {
+                langs.retain(|l| l != &track.language);
+            } else {
+                langs.push(track.language);
             }
-            if s.current_options.subtitle_langs.is_empty() {
+            if s.current_options.subtitle_langs.is_empty()
+                && s.current_options.automatic_subtitle_langs.is_empty()
+            {
                 s.current_options.subtitle_mode = SubtitleMode::None;
             } else if s.current_options.container != Container::Mkv {
                 s.current_options.container = Container::Mkv;
@@ -121,11 +146,31 @@ impl ConfigView {
         });
     }
 
-    fn select_all_subtitles(&mut self, langs: Vec<String>, cx: &mut Context<Self>) {
+    fn select_all_subtitles(&mut self, tracks: Vec<SubtitleTrack>, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
-            s.current_options.subtitle_mode = SubtitleMode::Custom;
-            s.current_options.subtitle_langs = langs.into_iter().filter(|l| l != "all").collect();
-            if !s.current_options.subtitle_langs.is_empty()
+            s.current_options.subtitle_langs.clear();
+            s.current_options.automatic_subtitle_langs.clear();
+            for track in tracks {
+                if track.language == "all" || track.language.trim().is_empty() {
+                    continue;
+                }
+                let langs = if track.is_automatic {
+                    &mut s.current_options.automatic_subtitle_langs
+                } else {
+                    &mut s.current_options.subtitle_langs
+                };
+                if !langs.contains(&track.language) {
+                    langs.push(track.language);
+                }
+            }
+            s.current_options.subtitle_mode = if s.current_options.subtitle_langs.is_empty()
+                && s.current_options.automatic_subtitle_langs.is_empty()
+            {
+                SubtitleMode::None
+            } else {
+                SubtitleMode::Custom
+            };
+            if s.current_options.subtitle_mode == SubtitleMode::Custom
                 && s.current_options.container != Container::Mkv
             {
                 s.current_options.container = Container::Mkv;
@@ -137,6 +182,7 @@ impl ConfigView {
     fn clear_subtitles(&mut self, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_langs.clear();
+            s.current_options.automatic_subtitle_langs.clear();
             s.current_options.subtitle_mode = SubtitleMode::None;
             cx.notify();
         });
@@ -781,8 +827,8 @@ impl Render for ConfigView {
                             CurrentMedia::Single(m) => m.subtitles.clone(),
                             _ => Vec::new(),
                         };
-                        let all_codes: Vec<String> = available_subs.iter().map(|s| s.language.clone()).collect();
-                        let all_codes_clone = all_codes.clone();
+                        let all_tracks = available_subs.clone();
+                        let tracks_for_toggle = available_subs.clone();
 
                         this.child(
                             v_flex()
@@ -801,9 +847,9 @@ impl Render for ConfigView {
                                                 .text_xs()
                                                 .text_color(cx.theme().muted_foreground)
                                                 .child(if available_subs.is_empty() {
-                                                    "No uploaded subtitles detected for this video.".into()
-                                                } else {
-                                                    format!("Select from {} uploaded subtitle(s):", available_subs.len())
+                                                     "No subtitles or captions detected for this video.".into()
+                                                 } else {
+                                                     format!("Select from {} subtitle(s) and caption(s):", available_subs.len())
                                                 }),
                                         )
                                         .when(!available_subs.is_empty(), |h| {
@@ -816,7 +862,7 @@ impl Render for ConfigView {
                                                             .xsmall()
                                                             .ghost()
                                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                                this.select_all_subtitles(all_codes_clone.clone(), cx);
+                                                                 this.select_all_subtitles(all_tracks.clone(), cx);
                                                             })),
                                                     )
                                                     .child(
@@ -850,16 +896,21 @@ impl Render for ConfigView {
                                                     .p_2()
                                                     .pr_6()
                                                     .children(available_subs.into_iter().map(|sub| {
-                                                        let code = sub.language.clone();
-                                                        let label = sub.display_label();
-                                                        let is_checked = opts.subtitle_langs.contains(&code);
-                                                        let code_clone = code.clone();
-                                                        Checkbox::new(format!("sub-lang-{}", code))
-                                                            .label(label)
-                                                            .checked(is_checked)
-                                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                                this.toggle_subtitle_lang(code_clone.clone(), cx);
-                                                            }))
+                                                         let source = if sub.is_automatic { "auto" } else { "uploaded" };
+                                                         let label = format!("{} · {}", sub.display_label(), if sub.is_automatic { "Automatic" } else { "Uploaded" });
+                                                         let is_checked = opts.subtitle_mode == SubtitleMode::All
+                                                             || if sub.is_automatic {
+                                                                 opts.automatic_subtitle_langs.contains(&sub.language)
+                                                             } else {
+                                                                 opts.subtitle_langs.contains(&sub.language)
+                                                             };
+                                                         let available = tracks_for_toggle.clone();
+                                                         Checkbox::new(format!("sub-lang-{source}-{}", sub.language))
+                                                             .label(label)
+                                                             .checked(is_checked)
+                                                             .on_click(cx.listener(move |this, _, _, cx| {
+                                                                 this.toggle_subtitle_lang(sub.clone(), available.clone(), cx);
+                                                             }))
                                                     })),
                                             )
                                             .child(

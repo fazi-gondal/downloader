@@ -426,12 +426,16 @@ impl YtDlpService {
                 clean_track_name(lang, note, lang_name)
             };
 
-            let track_key = if !lang.is_empty() {
-                lang.to_string()
-            } else if !track_name.is_empty() && track_name != "Audio" {
-                track_name.clone()
+            // YouTube can expose multiple dubbed tracks with the same language.
+            // Prefer the provider's stable audio_track.id so those tracks remain
+            // independently selectable; use progressively weaker identities only
+            // when that metadata is unavailable.
+            let track_key = if !at_id.is_empty() {
+                format!("track:{at_id}")
+            } else if !lang.is_empty() || (!track_name.is_empty() && track_name != "Audio") {
+                format!("lang:{lang}|name:{track_name}")
             } else {
-                fid.clone()
+                format!("format:{fid}")
             };
 
             let abr = f

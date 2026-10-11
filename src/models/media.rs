@@ -405,7 +405,11 @@ pub struct DownloadOptions {
     pub audio_tracks_mode: AudioTracksMode,
     pub selected_audio_langs: Vec<String>,
     pub subtitle_mode: SubtitleMode,
+    /// Uploaded subtitle languages. Kept under the existing key for saved options.
     pub subtitle_langs: Vec<String>,
+    /// Automatic caption languages, selected independently of uploaded subtitles.
+    #[serde(default)]
+    pub automatic_subtitle_langs: Vec<String>,
     pub embed_thumbnail: bool,
     pub embed_metadata: bool,
     /// Prefer VP9/VP09 video streams, then H.264/AVC1, then any compatible stream.
@@ -433,11 +437,31 @@ impl Default for DownloadOptions {
             selected_audio_langs: Vec::new(),
             subtitle_mode: SubtitleMode::None,
             subtitle_langs: Vec::new(),
+            automatic_subtitle_langs: Vec::new(),
             embed_thumbnail: true,
             embed_metadata: true,
             prefer_vp9_video: true,
             video_format_id: None,
             audio_format_id: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_download_options_deserialize_without_automatic_languages() {
+        let legacy = serde_json::to_value(DownloadOptions::default()).unwrap();
+        let mut legacy = legacy.as_object().unwrap().clone();
+        legacy.remove("automatic_subtitle_langs");
+        legacy.insert("subtitle_mode".into(), serde_json::json!("Custom"));
+        legacy.insert("subtitle_langs".into(), serde_json::json!(["en"]));
+
+        let decoded: DownloadOptions = serde_json::from_value(legacy.into()).unwrap();
+        assert_eq!(decoded.subtitle_langs, ["en"]);
+        assert!(decoded.automatic_subtitle_langs.is_empty());
+        assert_eq!(decoded.subtitle_mode, SubtitleMode::Custom);
     }
 }
