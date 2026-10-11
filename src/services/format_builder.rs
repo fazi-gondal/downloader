@@ -3,7 +3,7 @@
 //! This module has no I/O and is fully unit-testable.
 
 use crate::models::{
-    Container, DownloadMode, DownloadOptions, FormatInfo, MediaInfo, ResolutionPreset, StreamType,
+    DownloadMode, DownloadOptions, FormatInfo, MediaInfo, ResolutionPreset, StreamType,
     SubtitleMode,
 };
 
@@ -25,6 +25,15 @@ pub struct FormatBuilder;
 impl FormatBuilder {
     /// Compile UI options against available media formats into deterministic yt-dlp options.
     pub fn compile(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
+        Self::compile_inner(Some(media), options)
+    }
+
+    /// Compile options without metadata, omitting only the best-effort size estimate.
+    pub fn compile_without_media(options: &DownloadOptions) -> CompiledFormat {
+        Self::compile_inner(None, options)
+    }
+
+    fn compile_inner(media: Option<&MediaInfo>, options: &DownloadOptions) -> CompiledFormat {
         match options.mode {
             DownloadMode::AudioOnly => Self::compile_audio(media, options),
             DownloadMode::VideoOnly => Self::compile_video_only(media, options),
@@ -32,7 +41,7 @@ impl FormatBuilder {
         }
     }
 
-    fn compile_audio(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
+    fn compile_audio(media: Option<&MediaInfo>, options: &DownloadOptions) -> CompiledFormat {
         let ext = options.audio_format.extension().to_string();
         let quality = options.audio_quality.value().to_string();
         let mut extra = vec![
@@ -55,12 +64,16 @@ impl FormatBuilder {
             "bestaudio/best".into()
         };
 
-        let estimated = media
-            .formats
-            .iter()
-            .filter(|f| f.stream_type == StreamType::AudioOnly || f.stream_type == StreamType::Muxed)
-            .filter_map(|f| f.estimated_size(media.duration))
-            .max();
+        let estimated = media.and_then(|media| {
+            media
+                .formats
+                .iter()
+                .filter(|f| {
+                    f.stream_type == StreamType::AudioOnly || f.stream_type == StreamType::Muxed
+                })
+                .filter_map(|f| f.estimated_size(media.duration))
+                .max()
+        });
 
         CompiledFormat {
             format_selector: selector,
@@ -70,20 +83,17 @@ impl FormatBuilder {
         }
     }
 
-    fn compile_video_only(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
+    fn compile_video_only(media: Option<&MediaInfo>, options: &DownloadOptions) -> CompiledFormat {
         let selector = if let Some(ref vid) = options.video_format_id {
             vid.clone()
         } else {
             Self::video_selector(options.resolution, options.fps_filter, false)
         };
         let ext = options.container.extension().to_string();
-        let mut extra = Vec::new();
-        if options.container != Container::Mp4 {
-            extra.push("--merge-output-format".into());
-            extra.push(ext.clone());
-        }
+        let extra = vec!["--remux-video".into(), ext.clone()];
 
-        let estimated = Self::estimate_video_size(media, options.resolution, false);
+        let estimated =
+            media.and_then(|media| Self::estimate_video_size(media, options.resolution, false));
 
         CompiledFormat {
             format_selector: selector,
@@ -93,7 +103,7 @@ impl FormatBuilder {
         }
     }
 
-    fn compile_video_audio(media: &MediaInfo, options: &DownloadOptions) -> CompiledFormat {
+    fn compile_video_audio(media: Option<&MediaInfo>, options: &DownloadOptions) -> CompiledFormat {
         // ── Format selector ─────────────────────────────────────────────────────
         // Build the video part of the selector.
         // "bv*" (any video codec) gives yt-dlp more room to pick good formats;
@@ -138,9 +148,13 @@ impl FormatBuilder {
         } else {
             match (&options.video_format_id, &options.audio_format_id) {
                 (Some(v), Some(a)) => format!("{v}+{a}"),
-                (Some(v), None)    => format!("{v}+ba/b"),
-                (None,    Some(a)) => {
-                    let vp = if filters.is_empty() { "bv*".to_string() } else { format!("bv*{filters}") };
+                (Some(v), None) => format!("{v}+ba/b"),
+                (None, Some(a)) => {
+                    let vp = if filters.is_empty() {
+                        "bv*".to_string()
+                    } else {
+                        format!("bv*{filters}")
+                    };
                     format!("{vp}+{a}")
                 }
                 (None, None) => {
@@ -169,8 +183,7 @@ impl FormatBuilder {
             || options.audio_tracks_mode == crate::models::AudioTracksMode::All
             || options.selected_audio_langs.len() > 1;
         let has_subs = options.subtitle_mode != SubtitleMode::None
-            && (options.subtitle_mode == SubtitleMode::All
-                || !options.subtitle_langs.is_empty());
+            && (options.subtitle_mode == SubtitleMode::All || !options.subtitle_langs.is_empty());
         let effective_ext = if is_multi_audio || has_subs {
             "mkv".to_string()
         } else {
@@ -222,9 +235,11 @@ impl FormatBuilder {
                     .cloned()
                     .collect();
                 if !clean_langs.is_empty() {
-                    // Custom mode: embed only the exact languages; skip auto-subs
-                    // to avoid the 429 rate-limit burst that --write-auto-subs causes.
+                    // Custom mode: embed only the exact languages, including
+                    // automatic captions when the selected language is only
+                    // available through `automatic_captions`.
                     extra.push("--embed-subs".into());
+                    extra.push("--write-auto-subs".into());
                     extra.push("--sub-langs".into());
                     extra.push(clean_langs.join(","));
                 }
@@ -238,7 +253,8 @@ impl FormatBuilder {
             extra.push("--audio-multistreams".into());
         }
 
-        let estimated = Self::estimate_video_size(media, options.resolution, true);
+        let estimated =
+            media.and_then(|media| Self::estimate_video_size(media, options.resolution, true));
 
         CompiledFormat {
             format_selector: selector,
@@ -306,16 +322,10 @@ impl FormatBuilder {
         if let Some(v) = best_video {
             total += v.estimated_size(media.duration).unwrap_or(0);
         }
-        if include_audio {
-            if let Some(a) = best_audio {
-                total += a.estimated_size(media.duration).unwrap_or(0);
-            }
+        if include_audio && let Some(a) = best_audio {
+            total += a.estimated_size(media.duration).unwrap_or(0);
         }
-        if total > 0 {
-            Some(total)
-        } else {
-            None
-        }
+        if total > 0 { Some(total) } else { None }
     }
 
     /// Human-readable size string.
@@ -349,7 +359,6 @@ impl FormatBuilder {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -414,12 +423,46 @@ mod tests {
     #[test]
     fn audio_only_uses_extract_audio() {
         let media = sample_media();
-        let mut opts = DownloadOptions::default();
-        opts.mode = DownloadMode::AudioOnly;
-        opts.audio_format = AudioFormat::Mp3;
+        let opts = DownloadOptions {
+            mode: DownloadMode::AudioOnly,
+            audio_format: AudioFormat::Mp3,
+            ..DownloadOptions::default()
+        };
         let compiled = FormatBuilder::compile(&media, &opts);
         assert!(compiled.extra_args.iter().any(|a| a == "--extract-audio"));
         assert_eq!(compiled.output_ext, "mp3");
+    }
+
+    #[test]
+    fn video_only_forces_selected_container() {
+        let media = sample_media();
+        let opts = DownloadOptions {
+            mode: DownloadMode::VideoOnly,
+            container: Container::Mkv,
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile(&media, &opts);
+
+        assert_eq!(compiled.output_ext, "mkv");
+        assert_eq!(compiled.extra_args, vec!["--remux-video", "mkv"]);
+    }
+
+    #[test]
+    fn compile_without_media_preserves_selector_and_post_processing_options() {
+        let opts = DownloadOptions {
+            video_format_id: Some("137".into()),
+            audio_format_id: Some("140".into()),
+            subtitle_mode: SubtitleMode::Custom,
+            subtitle_langs: vec!["en".into()],
+            ..DownloadOptions::default()
+        };
+
+        let compiled = FormatBuilder::compile_without_media(&opts);
+
+        assert_eq!(compiled.format_selector, "137+140");
+        assert!(compiled.extra_args.iter().any(|arg| arg == "--embed-subs"));
+        assert!(compiled.extra_args.iter().any(|arg| arg == "en"));
+        assert_eq!(compiled.estimated_size, None);
     }
 
     #[test]
@@ -432,30 +475,39 @@ mod tests {
     #[test]
     fn multi_audio_selection_generates_multistreams_and_mkv() {
         let media = sample_media();
-        let mut opts = DownloadOptions::default();
-        opts.selected_audio_langs = vec!["251".to_string(), "140".to_string()];
+        let opts = DownloadOptions {
+            selected_audio_langs: vec!["251".to_string(), "140".to_string()],
+            ..DownloadOptions::default()
+        };
         let compiled = FormatBuilder::compile(&media, &opts);
 
         assert_eq!(compiled.output_ext, "mkv");
         assert!(compiled.format_selector.contains("251+140"));
         assert!(compiled.format_selector.contains("mergeall[vcodec=none]"));
-        assert!(compiled.extra_args.iter().any(|a| a == "--audio-multistreams"));
+        assert!(
+            compiled
+                .extra_args
+                .iter()
+                .any(|a| a == "--audio-multistreams")
+        );
     }
 
     #[test]
     fn subtitle_selection_generates_correct_flags_and_mkv() {
         let media = sample_media();
-        let mut opts = DownloadOptions::default();
-        opts.subtitle_mode = SubtitleMode::Custom;
-        opts.subtitle_langs = vec!["en".to_string(), "es".to_string()];
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::Custom,
+            subtitle_langs: vec!["en".to_string(), "es".to_string()],
+            ..DownloadOptions::default()
+        };
         let compiled = FormatBuilder::compile(&media, &opts);
 
         assert_eq!(compiled.output_ext, "mkv");
-        // Custom mode: embed-subs + exact sub-langs, but NO write-auto-subs or write-subs
-        // (those trigger HTTP 429 rate-limit errors from YouTube)
+        // Custom mode: embed-subs + exact sub-langs, including automatic captions.
+        // The language filter prevents downloading every automatic-caption variant.
         assert!(compiled.extra_args.iter().any(|a| a == "--embed-subs"));
         assert!(!compiled.extra_args.iter().any(|a| a == "--write-subs"));
-        assert!(!compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
+        assert!(compiled.extra_args.iter().any(|a| a == "--write-auto-subs"));
 
         let sub_langs_idx = compiled.extra_args.iter().position(|a| a == "--sub-langs");
         assert!(sub_langs_idx.is_some());
@@ -465,9 +517,11 @@ mod tests {
     #[test]
     fn subtitle_all_mode_includes_auto_subs_and_sleep() {
         let media = sample_media();
-        let mut opts = DownloadOptions::default();
-        opts.subtitle_mode = SubtitleMode::All;
-        opts.subtitle_langs = vec!["all".to_string()];
+        let opts = DownloadOptions {
+            subtitle_mode: SubtitleMode::All,
+            subtitle_langs: vec!["all".to_string()],
+            ..DownloadOptions::default()
+        };
         let compiled = FormatBuilder::compile(&media, &opts);
 
         assert_eq!(compiled.output_ext, "mkv");

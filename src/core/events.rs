@@ -8,15 +8,9 @@ use crate::models::{DownloadId, DownloadStatus, MediaInfo, PlaylistInfo};
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     /// Media or playlist analysis finished successfully.
-    AnalysisComplete {
-        url: String,
-        result: AnalysisResult,
-    },
+    AnalysisComplete { url: String, result: AnalysisResult },
     /// Analysis failed.
-    AnalysisFailed {
-        url: String,
-        error: String,
-    },
+    AnalysisFailed { url: String, error: String },
     /// Download task status changed.
     DownloadUpdated {
         id: DownloadId,
@@ -28,10 +22,7 @@ pub enum AppEvent {
         total_bytes: Option<u64>,
     },
     /// Generic toast / notification request.
-    Toast {
-        message: String,
-        kind: ToastKind,
-    },
+    Toast { message: String, kind: ToastKind },
 }
 
 #[derive(Debug, Clone)]

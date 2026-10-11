@@ -56,10 +56,10 @@ pub struct AudioTrack {
 
 impl AudioTrack {
     pub fn display_label(&self) -> String {
-        if let Some(ref l) = self.label {
-            if !l.is_empty() {
-                return l.clone();
-            }
+        if let Some(ref l) = self.label
+            && !l.is_empty()
+        {
+            return l.clone();
         }
         let mut parts = Vec::new();
         if let Some(ref t) = self.title {
@@ -83,10 +83,10 @@ impl AudioTrack {
             }
         }
 
-        if let Some(abr) = self.abr {
-            if abr > 0.0 {
-                parts.push(format!("{} kbps", abr.round() as u64));
-            }
+        if let Some(abr) = self.abr
+            && abr > 0.0
+        {
+            parts.push(format!("{} kbps", abr.round() as u64));
         }
 
         parts.push(format!("[id: {}]", self.format_id));
@@ -104,10 +104,11 @@ pub struct SubtitleTrack {
 
 impl SubtitleTrack {
     pub fn display_label(&self) -> String {
-        if let Some(ref n) = self.name {
-            if !n.is_empty() && n != &self.language {
-                return format!("{} ({})", n, self.language);
-            }
+        if let Some(ref n) = self.name
+            && !n.is_empty()
+            && n != &self.language
+        {
+            return format!("{} ({})", n, self.language);
         }
         self.language.clone()
     }

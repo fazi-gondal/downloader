@@ -16,6 +16,14 @@ use crate::services::{FormatBuilder, NetworkOptions};
 
 const DEFAULT_MAX_CONCURRENT: usize = 8;
 
+type ProgressUpdate = (
+    f64,
+    Option<String>,
+    Option<String>,
+    Option<u64>,
+    Option<u64>,
+);
+
 pub fn sanitize_filename(name: &str) -> String {
     let sanitized: String = name
         .chars()
@@ -33,6 +41,7 @@ pub fn sanitize_filename(name: &str) -> String {
 }
 
 /// Internal handle so we can kill a running process on cancel.
+#[derive(Clone)]
 pub struct DownloadManager {
     tasks: Arc<Mutex<HashMap<DownloadId, DownloadTask>>>,
     running: Arc<Mutex<HashMap<DownloadId, u32>>>,
@@ -48,7 +57,11 @@ impl Default for DownloadManager {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("VideoDownloader");
         let _ = std::fs::create_dir_all(&download_dir);
-        Self::new(DEFAULT_MAX_CONCURRENT, download_dir, PathBuf::from("yt-dlp"))
+        Self::new(
+            DEFAULT_MAX_CONCURRENT,
+            download_dir,
+            PathBuf::from("yt-dlp"),
+        )
     }
 }
 
@@ -58,7 +71,7 @@ impl DownloadManager {
         Self {
             tasks: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(Mutex::new(HashMap::<DownloadId, u32>::new())),
-            max_concurrent: max_concurrent.max(1).min(16),
+            max_concurrent: max_concurrent.clamp(1, 16),
             download_dir,
             ytdlp_binary,
             network: NetworkOptions::default(),
@@ -70,7 +83,7 @@ impl DownloadManager {
     }
 
     pub fn set_max_concurrent(&mut self, n: usize) {
-        self.max_concurrent = n.max(1).min(16);
+        self.max_concurrent = n.clamp(1, 16);
     }
 
     pub fn set_download_dir(&mut self, dir: PathBuf) {
@@ -144,29 +157,37 @@ impl DownloadManager {
         };
 
         // Terminate running child process tree
-        if let Ok(mut running) = self.running.lock() {
-            if let Some(pid) = running.remove(&id) {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    let _ = Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/F", "/T"])
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
-                }
+        if let Ok(mut running) = self.running.lock()
+            && let Some(pid) = running.remove(&id)
+            && pid != 0
+        {
+            // PID 0 is the startup reservation, not a real process.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
             }
         }
 
         // Clean up partial files (.part, .ytdl) if output path was identified
         if let Some(out) = maybe_out {
             let p = PathBuf::from(out);
-            let part = p.with_extension(format!("{}.part", p.extension().unwrap_or_default().to_string_lossy()));
-            let ytdl = p.with_extension(format!("{}.ytdl", p.extension().unwrap_or_default().to_string_lossy()));
+            let part = p.with_extension(format!(
+                "{}.part",
+                p.extension().unwrap_or_default().to_string_lossy()
+            ));
+            let ytdl = p.with_extension(format!(
+                "{}.ytdl",
+                p.extension().unwrap_or_default().to_string_lossy()
+            ));
             let _ = std::fs::remove_file(part);
             let _ = std::fs::remove_file(ytdl);
         }
@@ -176,17 +197,16 @@ impl DownloadManager {
 
     /// Retry a failed or cancelled task.
     pub fn retry(&self, id: DownloadId) {
-        if let Ok(mut map) = self.tasks.lock() {
-            if let Some(task) = map.get_mut(&id) {
-                if task.status.is_terminal() {
-                    task.status = DownloadStatus::Queued;
-                    task.progress = 0.0;
-                    task.speed = None;
-                    task.eta = None;
-                    task.downloaded_bytes = 0;
-                    task.error = None;
-                }
-            }
+        if let Ok(mut map) = self.tasks.lock()
+            && let Some(task) = map.get_mut(&id)
+            && task.status.is_terminal()
+        {
+            task.status = DownloadStatus::Queued;
+            task.progress = 0.0;
+            task.speed = None;
+            task.eta = None;
+            task.downloaded_bytes = 0;
+            task.error = None;
         }
         self.try_start_next();
     }
@@ -226,7 +246,7 @@ impl DownloadManager {
             .lock()
             .map(|m| {
                 let mut v: Vec<_> = m.values().cloned().collect();
-                v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                v.sort_by_key(|a| std::cmp::Reverse(a.created_at));
                 v
             })
             .unwrap_or_default()
@@ -250,9 +270,7 @@ impl DownloadManager {
 
     /// Start queued tasks up to max_concurrent.
     fn try_start_next(&self) {
-        let slots = self
-            .max_concurrent
-            .saturating_sub(self.running_count());
+        let slots = self.max_concurrent.saturating_sub(self.running_count());
         if slots == 0 {
             return;
         }
@@ -262,11 +280,7 @@ impl DownloadManager {
                 Ok(m) => m,
                 Err(_) => return,
             };
-            map.values()
-                .filter(|t| t.status == DownloadStatus::Queued)
-                .take(slots)
-                .cloned()
-                .collect()
+            queued_tasks_to_start(&map, slots)
         };
 
         for task in to_start {
@@ -281,6 +295,7 @@ impl DownloadManager {
         let media = task.media.clone();
         let binary = self.ytdlp_binary.clone();
         let network = self.network.clone();
+        let scheduler = self.clone();
 
         // Determine destination folder (support playlist subfolder if set)
         let target_dir = if let Some(ref pl_title) = task.playlist_title {
@@ -293,19 +308,28 @@ impl DownloadManager {
         };
 
         // Mark as downloading
-        if let Ok(mut map) = self.tasks.lock() {
-            if let Some(t) = map.get_mut(&id) {
-                t.status = DownloadStatus::Downloading;
-            }
+        if let Ok(mut map) = self.tasks.lock()
+            && let Some(t) = map.get_mut(&id)
+        {
+            t.status = DownloadStatus::Downloading;
+        }
+
+        // Reserve a slot before the worker starts so rapid enqueue calls cannot
+        // all observe an empty running map during process startup.
+        if let Ok(mut running) = self.running.lock() {
+            running.insert(id, 0);
         }
 
         let tasks = Arc::clone(&self.tasks);
         let running = Arc::clone(&self.running);
 
         thread::spawn(move || {
+            // Playlist items and history retries may not have metadata, but their
+            // selector and post-processing settings still need to reach yt-dlp.
             let compiled = media
                 .as_ref()
-                .map(|m| FormatBuilder::compile(m, &options));
+                .map(|m| FormatBuilder::compile(m, &options))
+                .unwrap_or_else(|| FormatBuilder::compile_without_media(&options));
 
             let output_template = target_dir
                 .join("%(title)s [%(id)s].%(ext)s")
@@ -325,11 +349,9 @@ impl DownloadManager {
                 "youtube:player_client=all".into(),
             ];
 
-            if let Some(ref c) = compiled {
-                args.push("-f".into());
-                args.push(c.format_selector.clone());
-                args.extend(c.extra_args.clone());
-            }
+            args.push("-f".into());
+            args.push(compiled.format_selector.clone());
+            args.extend(compiled.extra_args.clone());
             network.append_cli_args(&mut args);
 
             args.push(url);
@@ -349,29 +371,52 @@ impl DownloadManager {
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    if let Ok(mut map) = tasks.lock() {
-                        if let Some(t) = map.get_mut(&id) {
-                            t.status = DownloadStatus::Failed;
-                            t.error = Some(format!("failed to spawn yt-dlp: {e}"));
-                        }
+                    let _ = running.lock().map(|mut r| r.remove(&id));
+                    if let Ok(mut map) = tasks.lock()
+                        && let Some(t) = map.get_mut(&id)
+                        && t.status != DownloadStatus::Cancelled
+                    {
+                        t.status = DownloadStatus::Failed;
+                        t.error = Some(format!("failed to spawn yt-dlp: {e}"));
                     }
+                    scheduler.try_start_next();
                     return;
                 }
             };
 
             // Track process ID for cancellation
             let pid = child.id();
-            if let Ok(mut r) = running.lock() {
+            let cancelled_before_start = tasks
+                .lock()
+                .map(|m| {
+                    m.get(&id)
+                        .map(|t| t.status == DownloadStatus::Cancelled)
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true);
+            if cancelled_before_start {
+                let _ = child.kill();
+            } else if let Ok(mut r) = running.lock() {
+                // Replace the startup reservation with the real process id.
                 r.insert(id, pid);
             }
 
             // Drain stderr in background thread to prevent OS pipe buffer deadlocks
             // and capture diagnostic error messages if yt-dlp fails.
+            let stderr_tasks = Arc::clone(&tasks);
             let stderr_handle = child.stderr.take().map(|stderr| {
                 thread::spawn(move || {
                     let reader = BufReader::new(stderr);
                     let mut last_lines = std::collections::VecDeque::with_capacity(30);
-                    for line in reader.lines().flatten() {
+                    for line in reader.lines().map_while(Result::ok) {
+                        if is_processing_line(&line)
+                            && let Ok(mut map) = stderr_tasks.lock()
+                            && let Some(t) = map.get_mut(&id)
+                            && !t.status.is_terminal()
+                            && t.status != DownloadStatus::Cancelled
+                        {
+                            t.status = DownloadStatus::Processing;
+                        }
                         if last_lines.len() >= 30 {
                             last_lines.pop_front();
                         }
@@ -384,7 +429,7 @@ impl DownloadManager {
             // Parse stdout progress
             if let Some(stdout) = child.stdout.take() {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     // Cooperative cancel check
                     let cancelled = tasks
                         .lock()
@@ -402,47 +447,63 @@ impl DownloadManager {
                     // Destination output parsing
                     if line.starts_with("[download] Destination: ") {
                         let path = line.trim_start_matches("[download] Destination: ").trim();
-                        if let Ok(mut map) = tasks.lock() {
-                            if let Some(t) = map.get_mut(&id) {
-                                t.output_path = Some(path.to_string());
-                            }
+                        if let Ok(mut map) = tasks.lock()
+                            && let Some(t) = map.get_mut(&id)
+                        {
+                            t.output_path = Some(path.to_string());
                         }
                     } else if line.starts_with("[Merger] Merging formats into ") {
-                        let path = line.trim_start_matches("[Merger] Merging formats into ").trim().trim_matches('"');
-                        if let Ok(mut map) = tasks.lock() {
-                            if let Some(t) = map.get_mut(&id) {
-                                t.output_path = Some(path.to_string());
-                            }
+                        let path = line
+                            .trim_start_matches("[Merger] Merging formats into ")
+                            .trim()
+                            .trim_matches('"');
+                        if let Ok(mut map) = tasks.lock()
+                            && let Some(t) = map.get_mut(&id)
+                        {
+                            t.output_path = Some(path.to_string());
                         }
                     } else if line.starts_with("[ExtractAudio] Destination: ") {
-                        let path = line.trim_start_matches("[ExtractAudio] Destination: ").trim();
-                        if let Ok(mut map) = tasks.lock() {
-                            if let Some(t) = map.get_mut(&id) {
-                                t.output_path = Some(path.to_string());
-                            }
+                        let path = line
+                            .trim_start_matches("[ExtractAudio] Destination: ")
+                            .trim();
+                        if let Ok(mut map) = tasks.lock()
+                            && let Some(t) = map.get_mut(&id)
+                        {
+                            t.output_path = Some(path.to_string());
                         }
                     } else if line.starts_with("[EmbedSubtitle] Embedding subtitles in ") {
-                        let path = line.trim_start_matches("[EmbedSubtitle] Embedding subtitles in ").trim().trim_matches('"');
-                        if let Ok(mut map) = tasks.lock() {
-                            if let Some(t) = map.get_mut(&id) {
-                                t.output_path = Some(path.to_string());
-                            }
+                        let path = line
+                            .trim_start_matches("[EmbedSubtitle] Embedding subtitles in ")
+                            .trim()
+                            .trim_matches('"');
+                        if let Ok(mut map) = tasks.lock()
+                            && let Some(t) = map.get_mut(&id)
+                        {
+                            t.output_path = Some(path.to_string());
                         }
                     }
 
-                    if let Some((pct, speed, eta, downloaded, total)) = parse_progress_line(&line) {
-                        if let Ok(mut map) = tasks.lock() {
-                            if let Some(t) = map.get_mut(&id) {
-                                t.progress = pct;
-                                t.speed = speed;
-                                t.eta = eta;
-                                if let Some(d) = downloaded {
-                                    t.downloaded_bytes = d;
-                                }
-                                if let Some(tot) = total {
-                                    t.total_bytes = Some(tot);
-                                }
-                            }
+                    if is_processing_line(&line)
+                        && let Ok(mut map) = tasks.lock()
+                        && let Some(t) = map.get_mut(&id)
+                        && !t.status.is_terminal()
+                        && t.status != DownloadStatus::Cancelled
+                    {
+                        t.status = DownloadStatus::Processing;
+                    }
+
+                    if let Some((pct, speed, eta, downloaded, total)) = parse_progress_line(&line)
+                        && let Ok(mut map) = tasks.lock()
+                        && let Some(t) = map.get_mut(&id)
+                    {
+                        t.progress = pct;
+                        t.speed = speed;
+                        t.eta = eta;
+                        if let Some(d) = downloaded {
+                            t.downloaded_bytes = d;
+                        }
+                        if let Some(tot) = total {
+                            t.total_bytes = Some(tot);
                         }
                     }
                 }
@@ -454,37 +515,68 @@ impl DownloadManager {
                 .unwrap_or_default();
             let _ = running.lock().map(|mut r| r.remove(&id));
 
-            if let Ok(mut map) = tasks.lock() {
-                if let Some(t) = map.get_mut(&id) {
-                    if t.status == DownloadStatus::Cancelled {
-                        // already marked
-                    } else if status.map(|s| s.success()).unwrap_or(false) {
-                        t.status = DownloadStatus::Completed;
-                        t.progress = 1.0;
-                    } else {
-                        t.status = DownloadStatus::Failed;
-                        if t.error.is_none() {
-                            let trimmed = stderr_output.trim();
-                            let error_line = trimmed
-                                .lines()
-                                .rev()
-                                .find(|l| l.contains("ERROR:") || l.contains("error:"))
-                                .or_else(|| trimmed.lines().rev().find(|l| !l.trim().is_empty()))
-                                .unwrap_or("yt-dlp exited with error");
-                            t.error = Some(error_line.to_string());
-                        }
+            if let Ok(mut map) = tasks.lock()
+                && let Some(t) = map.get_mut(&id)
+            {
+                if t.status == DownloadStatus::Cancelled {
+                    // already marked
+                } else if status.map(|s| s.success()).unwrap_or(false) {
+                    t.status = DownloadStatus::Completed;
+                    t.progress = 1.0;
+                } else {
+                    t.status = DownloadStatus::Failed;
+                    if t.error.is_none() {
+                        let trimmed = stderr_output.trim();
+                        let error_line = trimmed
+                            .lines()
+                            .rev()
+                            .find(|l| l.contains("ERROR:") || l.contains("error:"))
+                            .or_else(|| trimmed.lines().rev().find(|l| !l.trim().is_empty()))
+                            .unwrap_or("yt-dlp exited with error");
+                        t.error = Some(error_line.to_string());
                     }
                 }
             }
+
+            // The worker has released its slot; start the next queued task even
+            // when this process exited unsuccessfully.
+            scheduler.try_start_next();
         });
     }
 }
 
+fn queued_tasks_to_start(
+    tasks: &HashMap<DownloadId, DownloadTask>,
+    slots: usize,
+) -> Vec<DownloadTask> {
+    tasks
+        .values()
+        .filter(|task| task.status == DownloadStatus::Queued)
+        .take(slots)
+        .cloned()
+        .collect()
+}
+
+fn is_processing_line(line: &str) -> bool {
+    [
+        "[Merger]",
+        "[ExtractAudio]",
+        "[Embed",
+        "[Metadata]",
+        "[VideoRemuxer]",
+        "[Fixup",
+        "[MoveFiles]",
+        "[SplitChapters]",
+        "[ThumbnailsConvertor]",
+        "[PostProcess]",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+}
+
 /// Parse a yt-dlp progress line.
 /// Example: `[download]  45.2% of 12.34MiB at 1.23MiB/s ETA 00:08`
-fn parse_progress_line(
-    line: &str,
-) -> Option<(f64, Option<String>, Option<String>, Option<u64>, Option<u64>)> {
+fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     if !line.contains("[download]") || !line.contains('%') {
         return None;
     }
@@ -501,13 +593,42 @@ fn parse_progress_line(
         .and_then(|s| s.split(" ETA ").next())
         .map(|s| s.trim().to_string());
 
-    let eta = line
-        .split(" ETA ")
-        .nth(1)
-        .map(|s| s.trim().to_string());
+    let eta = line.split(" ETA ").nth(1).map(|s| s.trim().to_string());
 
-    // Best-effort size parse is left for later; progress % is the main signal.
-    Some((pct, speed, eta, None, None))
+    // Standard yt-dlp output is `of 12.34MiB`; a leading `~` means the
+    // estimate is approximate but is still useful for progress accounting.
+    let total = line
+        .split_once('%')
+        .and_then(|(_, rest)| rest.split_once(" of "))
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(parse_size_bytes);
+
+    // yt-dlp does not print a separate downloaded-size field in its normal
+    // progress template, so derive it from the precise percentage and total.
+    // This keeps byte progress useful while retaining the original percentage.
+    let downloaded = total.map(|total| (total as f64 * pct).round() as u64);
+
+    Some((pct, speed, eta, downloaded, total))
+}
+
+fn parse_size_bytes(value: &str) -> Option<u64> {
+    let value = value.trim().trim_start_matches('~');
+    let split_at = value.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))?;
+    let (number, unit) = value.split_at(split_at);
+    let number = number.replace(',', ".").parse::<f64>().ok()?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "b" => 1.0,
+        "kib" => 1024.0,
+        "mib" => 1024.0 * 1024.0,
+        "gib" => 1024.0 * 1024.0 * 1024.0,
+        "tib" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        "kb" => 1000.0,
+        "mb" => 1000.0 * 1000.0,
+        "gb" => 1000.0 * 1000.0 * 1000.0,
+        "tb" => 1000.0 * 1000.0 * 1000.0 * 1000.0,
+        _ => return None,
+    };
+    Some((number * multiplier).round() as u64)
 }
 
 #[cfg(test)]
@@ -547,9 +668,40 @@ mod tests {
     #[test]
     fn parse_progress() {
         let line = "[download]  45.2% of 12.34MiB at 1.23MiB/s ETA 00:08";
-        let (pct, speed, eta, _, _) = parse_progress_line(line).unwrap();
+        let (pct, speed, eta, downloaded, total) = parse_progress_line(line).unwrap();
         assert!((pct - 0.452).abs() < 0.001);
         assert!(speed.unwrap().contains("1.23"));
         assert_eq!(eta.unwrap(), "00:08");
+        assert_eq!(total, Some(12_939_428));
+        assert_eq!(downloaded, Some(5_848_621));
+    }
+
+    #[test]
+    fn parse_progress_supports_approximate_and_decimal_units() {
+        let line = "[download]  12.5% of ~2.00GB at 4.00MB/s ETA 00:30";
+        let (_, speed, eta, downloaded, total) = parse_progress_line(line).unwrap();
+        assert_eq!(total, Some(2_000_000_000));
+        assert_eq!(downloaded, Some(250_000_000));
+        assert_eq!(speed.as_deref(), Some("4.00MB/s"));
+        assert_eq!(eta.as_deref(), Some("00:30"));
+    }
+
+    #[test]
+    fn queue_scheduler_only_selects_queued_tasks_for_available_slots() {
+        let mut tasks = HashMap::new();
+        let queued = DownloadTask::new("https://example.com/queued", DownloadOptions::default());
+        let mut downloading = DownloadTask::new(
+            "https://example.com/downloading",
+            DownloadOptions::default(),
+        );
+        downloading.status = DownloadStatus::Downloading;
+        let queued_id = queued.id;
+        tasks.insert(queued.id, queued);
+        tasks.insert(downloading.id, downloading);
+
+        let selected = queued_tasks_to_start(&tasks, 1);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, queued_id);
+        assert!(queued_tasks_to_start(&tasks, 0).is_empty());
     }
 }

@@ -48,6 +48,7 @@ impl AppState {
 
         let network = NetworkOptions {
             proxy: settings.proxy.clone(),
+            custom_headers: settings.custom_headers.clone(),
             cookies_browser: settings.cookies_browser.clone(),
             rate_limit_kbps: settings.rate_limit_kbps,
             concurrent_fragments: settings.concurrent_fragments,
@@ -78,6 +79,7 @@ impl AppState {
     pub fn apply_settings_to_services(&mut self) {
         let network = NetworkOptions {
             proxy: self.settings.proxy.clone(),
+            custom_headers: self.settings.custom_headers.clone(),
             cookies_browser: self.settings.cookies_browser.clone(),
             rate_limit_kbps: self.settings.rate_limit_kbps,
             concurrent_fragments: self.settings.concurrent_fragments,
@@ -113,10 +115,10 @@ impl AppState {
     }
 
     pub fn toggle_playlist_entry(&mut self, index: usize) {
-        if let CurrentMedia::Playlist(ref mut pl) = self.current_media {
-            if let Some(entry) = pl.entries.get_mut(index) {
-                entry.selected = !entry.selected;
-            }
+        if let CurrentMedia::Playlist(ref mut pl) = self.current_media
+            && let Some(entry) = pl.entries.get_mut(index)
+        {
+            entry.selected = !entry.selected;
         }
     }
 

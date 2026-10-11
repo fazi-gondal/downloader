@@ -6,7 +6,7 @@
 
 Built with **[GPUI-kit](https://gpui-kit.com)** (Rust native UI framework), **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** (media extraction engine), and **[FFmpeg](https://ffmpeg.org)** (merging, remuxing, conversion).
 
-A full Rust rewrite of the original [Video-Downloader](https://github.com/fazi-gondal/Video-Downloader) (Python + Flet) — preserving all features and architecture while delivering native performance and a polished desktop experience.
+A Rust + GPUI-kit rewrite of the original [Video-Downloader](https://github.com/fazi-gondal/Video-Downloader) (Python + Flet). The core download, conversion, history, and settings workflows are implemented natively, with the remaining parity work tracked in `plan.md`.
 
 ---
 
@@ -73,7 +73,7 @@ A full Rust rewrite of the original [Video-Downloader](https://github.com/fazi-g
 - **All Available** — embed every subtitle language + auto-generated captions
 - **Select Languages** — tick specific languages from the detected list; scrollable picker
 - Subtitles are written, embedded into the container via FFmpeg, then intermediate files are deleted
-- Auto-generated captions (`--write-auto-subs`) are included when available
+- Auto-generated captions are detected and included when available
 
 ### Metadata Embedding
 - **Thumbnail** — cover art embedded into the container
@@ -89,7 +89,7 @@ A full Rust rewrite of the original [Video-Downloader](https://github.com/fazi-g
 - Per-download fragment connections for faster segmented downloads
 - Live progress: percentage, download speed, ETA
 - Safe cancel — terminates the yt-dlp process cleanly
-- Status: Pending → Downloading → Completed / Failed / Cancelled
+- Status: Queued → Downloading → Processing → Completed / Failed / Cancelled
 
 ### History
 - Persistent download history (JSON file)
@@ -105,6 +105,7 @@ A full Rust rewrite of the original [Video-Downloader](https://github.com/fazi-g
 - HTTP and SOCKS5 proxy support
 - Cookies exported from browser (chrome, firefox, edge, brave, opera, safari, vivaldi, chromium)
 - Optional download rate limit (KB/s)
+- Custom HTTP headers (`Header-Name: value`, one per line)
 - `--extractor-args youtube:player_client=all` to expose all dubbed language tracks
 
 ### App Shell
@@ -241,7 +242,8 @@ Audio tracks are keyed by their **format ID** (e.g. `251`, `140`, `233-dub-en`).
 ## Subtitles
 
 ### Embedding process
-The app uses: `--write-subs --write-auto-subs --embed-subs --sub-langs LANGS`
+The app uses yt-dlp's embed flow: `--write-auto-subs --embed-subs --sub-langs LANGS`.
+Intermediate subtitle files are not intentionally retained.
 
 yt-dlp's `FFmpegEmbedSubtitlePP` post-processor:
 1. Downloads subtitle tracks as `.vtt`/`.srt` files
@@ -252,8 +254,8 @@ yt-dlp's `FFmpegEmbedSubtitlePP` post-processor:
 | Mode | yt-dlp flags |
 |------|-------------|
 | None | *(omitted)* |
-| All Available | `--write-subs --write-auto-subs --embed-subs --sub-langs all` |
-| Custom (e.g. en + fr) | `--write-subs --write-auto-subs --embed-subs --sub-langs en,fr` |
+| All Available | `--write-auto-subs --embed-subs --sub-langs all` |
+| Custom (e.g. en + fr) | `--write-auto-subs --embed-subs --sub-langs en,fr` |
 
 > **Note**: MKV is recommended for subtitle embedding (auto-switched when subtitles are enabled).
 
@@ -316,7 +318,8 @@ Runs FFmpeg locally on existing media files — no internet required.
 | Multi Audio | `false` | Default multi-audio track mode |
 | Embed Thumbnail | `true` | Embed cover art into output file |
 | Embed Metadata | `true` | Embed title, tags, description |
-| Theme | `System` | `System` / `Dark` / `Light` |
+| Custom HTTP Headers | *(empty)* | One `Header-Name: value` per line; invalid lines are ignored |
+| Theme | `System` | `System` / `Dark` / `Light` preference |
 
 ---
 
@@ -339,6 +342,7 @@ Example `settings.json`:
   "max_concurrent": 8,
   "concurrent_fragments": 4,
   "proxy": "",
+  "custom_headers": "",
   "cookies_browser": "",
   "rate_limit_kbps": 0,
   "write_subtitles": false,

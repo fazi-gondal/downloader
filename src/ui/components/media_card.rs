@@ -1,12 +1,12 @@
 //! Card showing analyzed media metadata (thumbnail preview, title, author, duration).
 
-use gpui_kit::component::{h_flex, v_flex, Icon};
-use crate::ui::prelude::*;
 use crate::models::media::{MediaInfo, PlaylistInfo};
+use crate::ui::prelude::*;
 use crate::ui::theme::{
-    BORDER_SUBTLE, RADIUS_CARD, RADIUS_CONTROL, RADIUS_PILL, SURFACE_ELEVATED,
-    SURFACE_HIGHEST, TEXT_PRIMARY, TEXT_MUTED,
+    BORDER_SUBTLE, RADIUS_CARD, RADIUS_CONTROL, RADIUS_PILL, SURFACE_ELEVATED, SURFACE_HIGHEST,
+    TEXT_MUTED, TEXT_PRIMARY,
 };
+use gpui_kit::component::{Icon, h_flex, v_flex};
 
 fn meta_pill(icon: IconName, text: impl Into<SharedString>) -> impl IntoElement {
     h_flex()
@@ -60,7 +60,11 @@ pub fn single_media_card(media: &MediaInfo) -> impl IntoElement {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(IconName::Film).size(px(36.)).text_color(TEXT_MUTED)),
+                .child(
+                    Icon::new(IconName::Film)
+                        .size(px(36.))
+                        .text_color(TEXT_MUTED),
+                ),
         )
         .child(
             v_flex()
@@ -109,7 +113,11 @@ pub fn playlist_media_card(playlist: &PlaylistInfo) -> impl IntoElement {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(IconName::ListVideo).size(px(36.)).text_color(TEXT_MUTED)),
+                .child(
+                    Icon::new(IconName::ListVideo)
+                        .size(px(36.))
+                        .text_color(TEXT_MUTED),
+                ),
         )
         .child(
             v_flex()

@@ -8,11 +8,14 @@ use crate::core::{AppError, Result};
 
 /// Persistent application settings (mirrors the reference settings table).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub download_dir: PathBuf,
     pub max_concurrent: u32,
     pub concurrent_fragments: u32,
     pub proxy: String,
+    /// One custom HTTP header per line in `Header-Name: value` format.
+    pub custom_headers: String,
     pub cookies_browser: String,
     pub rate_limit_kbps: u32,
     pub keep_originals: bool,
@@ -53,6 +56,7 @@ impl Default for AppSettings {
             max_concurrent: 8,
             concurrent_fragments: 1,
             proxy: String::new(),
+            custom_headers: String::new(),
             cookies_browser: String::new(),
             rate_limit_kbps: 0,
             keep_originals: true,
@@ -101,5 +105,19 @@ impl AppSettings {
         let data = serde_json::to_string_pretty(self)?;
         std::fs::write(path, data)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_without_custom_headers_use_the_default() {
+        let settings: AppSettings =
+            serde_json::from_str("{}").expect("settings should deserialize");
+
+        assert!(settings.custom_headers.is_empty());
+        assert_eq!(settings.max_concurrent, 8);
     }
 }

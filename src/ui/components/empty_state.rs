@@ -1,7 +1,7 @@
 //! Empty state component for views with zero items.
 
-use gpui_kit::component::{v_flex, Icon};
 use crate::ui::prelude::*;
+use gpui_kit::component::{Icon, v_flex};
 
 pub fn empty_state(
     icon: IconName,

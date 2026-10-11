@@ -1,11 +1,11 @@
 //! Built-in media converter (local files via FFmpeg).
 
-use std::path::{Path, PathBuf};
+use crate::ui::prelude::*;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{h_flex, v_flex, Icon};
-use crate::ui::prelude::*;
+use gpui_kit::component::{Icon, h_flex, v_flex};
+use std::path::Path;
 
 use crate::core::AppState;
 use crate::models::{ConversionId, ConversionProfile, ConversionStatus, ConversionTask};
@@ -20,7 +20,8 @@ pub struct ConverterView {
 impl ConverterView {
     pub fn new(window: &mut Window, state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
         let path_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Path to local media file (e.g. C:\\Videos\\sample.mkv)…")
+            InputState::new(window, cx)
+                .placeholder("Path to local media file (e.g. C:\\Videos\\sample.mkv)…")
         });
         Self {
             state,
@@ -81,7 +82,8 @@ impl ConverterView {
         let profile = self.profile;
         let keep = self.keep_original;
         self.state.update(cx, |s, cx| {
-            s.conversions.enqueue_with_options(path.clone(), profile, keep);
+            s.conversions
+                .enqueue_with_options(path.clone(), profile, keep);
             cx.notify();
         });
 
@@ -150,7 +152,9 @@ impl ConverterView {
         }
         #[cfg(not(windows))]
         {
-            let _ = std::process::Command::new("xdg-open").arg(default_dir).spawn();
+            let _ = std::process::Command::new("xdg-open")
+                .arg(default_dir)
+                .spawn();
         }
     }
 }
@@ -162,7 +166,10 @@ impl Render for ConverterView {
         let profile = self.profile;
         let keep_original = self.keep_original;
 
-        let completed_count = tasks.iter().filter(|t| t.status == ConversionStatus::Completed).count();
+        let completed_count = tasks
+            .iter()
+            .filter(|t| t.status == ConversionStatus::Completed)
+            .count();
         let cards: Vec<AnyElement> = tasks
             .into_iter()
             .map(|task| render_conversion_card(task, &output_dir, cx))
@@ -337,13 +344,14 @@ impl Render for ConverterView {
 
 fn render_conversion_card(
     task: ConversionTask,
-    output_dir: &PathBuf,
+    output_dir: &Path,
     cx: &mut Context<ConverterView>,
 ) -> AnyElement {
     let id = task.id;
     let is_running = task.status == ConversionStatus::Running;
     let is_completed = task.status == ConversionStatus::Completed;
-    let is_failed = task.status == ConversionStatus::Failed || task.status == ConversionStatus::Cancelled;
+    let is_failed =
+        task.status == ConversionStatus::Failed || task.status == ConversionStatus::Cancelled;
 
     let (status_color, status_icon) = match task.status {
         ConversionStatus::Completed => (cx.theme().success, IconName::Check),
@@ -360,7 +368,7 @@ fn render_conversion_card(
         .to_string();
 
     let output_clone = task.output_path.clone();
-    let dir_clone = output_dir.clone();
+    let dir_clone = output_dir.to_path_buf();
 
     v_flex()
         .id(format!("conv-card-{}", id))
@@ -410,14 +418,13 @@ fn render_conversion_card(
                                         .child(task.profile.label()),
                                 )
                                 .when_some(task.output_path.as_ref(), |this, out| {
-                                    this.child(div().child("·"))
-                                        .child(
-                                            div()
-                                                .max_w(px(320.))
-                                                .text_ellipsis()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(out.clone()),
-                                        )
+                                    this.child(div().child("·")).child(
+                                        div()
+                                            .max_w(px(320.))
+                                            .text_ellipsis()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(out.clone()),
+                                    )
                                 }),
                         ),
                 )

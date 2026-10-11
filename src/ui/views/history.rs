@@ -1,9 +1,9 @@
 //! Download history (persisted JSON).
 
-use std::path::{Path, PathBuf};
+use crate::ui::prelude::*;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{h_flex, v_flex};
-use crate::ui::prelude::*;
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::core::AppState;
@@ -45,9 +45,16 @@ impl HistoryView {
         });
     }
 
-    fn redownload(&mut self, url: String, title: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn redownload(
+        &mut self,
+        url: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.state.update(cx, |s, cx| {
-            s.downloads.enqueue(url.clone(), s.current_options.clone(), None);
+            s.downloads
+                .enqueue(url.clone(), s.current_options.clone(), None);
             s.active_route = crate::core::AppRoute::Downloads;
             cx.notify();
         });
@@ -88,7 +95,9 @@ impl HistoryView {
         }
         #[cfg(not(windows))]
         {
-            let _ = std::process::Command::new("xdg-open").arg(default_dir).spawn();
+            let _ = std::process::Command::new("xdg-open")
+                .arg(default_dir)
+                .spawn();
         }
     }
 }
@@ -226,20 +235,17 @@ impl Render for HistoryView {
 
 fn render_history_card(
     entry: HistoryEntry,
-    download_dir: &PathBuf,
+    download_dir: &Path,
     cx: &mut Context<HistoryView>,
 ) -> AnyElement {
     let id = entry.id;
-    let when = entry
-        .completed_at
-        .format("%Y-%m-%d %H:%M")
-        .to_string();
+    let when = entry.completed_at.format("%Y-%m-%d %H:%M").to_string();
     let size = FormatBuilder::format_size(entry.file_size);
 
     let url_clone = entry.url.clone();
     let title_clone = entry.title.clone();
     let out_clone = entry.output_path.clone();
-    let dir_clone = download_dir.clone();
+    let dir_clone = download_dir.to_path_buf();
 
     h_flex()
         .id(format!("hist-item-{}", id))
@@ -276,17 +282,9 @@ fn render_history_card(
                             },
                         ))
                         .child(div().child("·"))
-                        .child(
-                            div()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(when),
-                        )
+                        .child(div().text_color(cx.theme().muted_foreground).child(when))
                         .child(div().child("·"))
-                        .child(
-                            div()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(size),
-                        ),
+                        .child(div().text_color(cx.theme().muted_foreground).child(size)),
                 )
                 .when_some(entry.output_path.as_ref(), |this, out| {
                     this.child(

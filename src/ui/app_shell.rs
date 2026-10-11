@@ -3,12 +3,13 @@
 //! Owns the shared AppState Entity and passes clones to feature views.
 //! Uses default system window decorations (minimize / maximize / close).
 
+use crate::ui::prelude::*;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
-use gpui_kit::component::button::Button;
-use gpui_kit::component::{h_flex, Icon};
-use crate::ui::prelude::*;
+use gpui_kit::component::{Icon, h_flex};
+use std::time::Duration;
 
 use crate::core::{AppRoute, AppState};
 use crate::ui::views::{
@@ -27,6 +28,7 @@ pub struct AppShell {
     settings: Entity<SettingsView>,
     about: Entity<AboutView>,
     ffmpeg_ok: bool,
+    _history_sync_task: Task<()>,
 }
 
 impl AppShell {
@@ -35,6 +37,24 @@ impl AppShell {
         let ffmpeg_ok = crate::services::FfmpegService::default()
             .check_available()
             .is_ok();
+        let history_sync_task = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+
+                if this
+                    .update(cx, |shell, cx| {
+                        shell.state.update(cx, |state, _| {
+                            state.sync_downloads_to_history();
+                        });
+                        // Refresh progress and history while workers are active.
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         Self {
             route: AppRoute::Dashboard,
@@ -47,6 +67,7 @@ impl AppShell {
             settings: cx.new(|cx| SettingsView::new(window, state.clone(), cx)),
             about: cx.new(|cx| AboutView::new(window, cx)),
             ffmpeg_ok,
+            _history_sync_task: history_sync_task,
         }
     }
 
@@ -199,16 +220,11 @@ impl AppShell {
                                 .border_color(cx.theme().border)
                                 .items_center()
                                 .gap_2()
-                                .child(
-                                    div()
-                                        .size(px(8.))
-                                        .rounded_full()
-                                        .bg(if ffmpeg_ok {
-                                            crate::ui::theme::PILL_GREEN
-                                        } else {
-                                            crate::ui::theme::PILL_RED
-                                        }),
-                                )
+                                .child(div().size(px(8.)).rounded_full().bg(if ffmpeg_ok {
+                                    crate::ui::theme::PILL_GREEN
+                                } else {
+                                    crate::ui::theme::PILL_RED
+                                }))
                                 .child(
                                     div()
                                         .text_xs()
@@ -264,12 +280,6 @@ impl Render for AppShell {
             .size_full()
             .bg(cx.theme().background)
             .child(self.sidebar(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .overflow_hidden()
-                    .child(content),
-            )
+            .child(div().flex_1().h_full().overflow_hidden().child(content))
     }
 }

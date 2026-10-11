@@ -1,21 +1,20 @@
 //! Config view: mode, resolution ladder, container, fps, audio format/quality,
 //! subtitle modes, multi-audio, playlist picker, and format explorer.
 
+use crate::ui::prelude::*;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::{h_flex, v_flex, Icon};
-use crate::ui::prelude::*;
+use gpui_kit::component::{Icon, h_flex, v_flex};
 
 use crate::core::{AppState, CurrentMedia};
 use crate::models::{
-    AudioFormat, AudioQualityPreset, AudioTracksMode, Container, DownloadMode, ResolutionPreset, StreamType,
-    SubtitleMode,
+    AudioFormat, AudioQualityPreset, AudioTracksMode, Container, DownloadMode, ResolutionPreset,
+    StreamType, SubtitleMode,
 };
 use crate::services::FormatBuilder;
 
-
-use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::ScrollHandle;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 
 pub struct ConfigView {
     state: Entity<AppState>,
@@ -103,7 +102,12 @@ impl ConfigView {
         self.state.update(cx, |s, cx| {
             s.current_options.subtitle_mode = SubtitleMode::Custom;
             s.current_options.subtitle_langs.retain(|l| l != "all");
-            if let Some(pos) = s.current_options.subtitle_langs.iter().position(|l| l == &lang) {
+            if let Some(pos) = s
+                .current_options
+                .subtitle_langs
+                .iter()
+                .position(|l| l == &lang)
+            {
                 s.current_options.subtitle_langs.remove(pos);
             } else {
                 s.current_options.subtitle_langs.push(lang);
@@ -201,7 +205,12 @@ impl ConfigView {
 
     fn toggle_audio_lang(&mut self, lang: String, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
-            if let Some(pos) = s.current_options.selected_audio_langs.iter().position(|l| l == &lang) {
+            if let Some(pos) = s
+                .current_options
+                .selected_audio_langs
+                .iter()
+                .position(|l| l == &lang)
+            {
                 s.current_options.selected_audio_langs.remove(pos);
             } else {
                 s.current_options.selected_audio_langs.push(lang);

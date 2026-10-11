@@ -3,10 +3,10 @@
 //! Designed with Nocturnal Studio aesthetics: centered hero state,
 //! sleek search bar, supported services display, and media cards on result.
 
+use crate::ui::prelude::*;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{h_flex, v_flex, Icon};
-use crate::ui::prelude::*;
+use gpui_kit::component::{Icon, h_flex, v_flex};
 
 use crate::core::{AppRoute, AppState, CurrentMedia};
 use crate::services::ytdlp::ExtractedInfo;
@@ -20,9 +20,8 @@ pub struct DashboardView {
 
 impl DashboardView {
     pub fn new(window: &mut Window, state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
-        let url_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Paste a link and go…")
-        });
+        let url_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Paste a link and go…"));
         Self { state, url_input }
     }
 
@@ -91,9 +90,11 @@ impl Render for DashboardView {
             .items_center()
             .gap_2()
             .child(
-                div()
-                    .pl_3()
-                    .child(Icon::new(IconName::Link).size(px(18.)).text_color(cx.theme().muted_foreground)),
+                div().pl_3().child(
+                    Icon::new(IconName::Link)
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
             )
             .child(div().flex_1().child(Input::new(&self.url_input)))
             .child(
@@ -212,12 +213,15 @@ impl Render for DashboardView {
                             .border_color(cx.theme().border)
                             .items_center()
                             .gap_3()
-                            .child(Icon::new(IconName::LoaderCircle).size(px(20.)).text_color(CORAL))
                             .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child("Analyzing media streams… (fetching metadata via yt-dlp)"),
+                                Icon::new(IconName::LoaderCircle)
+                                    .size(px(20.))
+                                    .text_color(CORAL),
+                            )
+                            .child(
+                                div().text_sm().text_color(cx.theme().foreground).child(
+                                    "Analyzing media streams… (fetching metadata via yt-dlp)",
+                                ),
                             ),
                     )
                 })
@@ -237,85 +241,74 @@ impl Render for DashboardView {
                             .border_color(border)
                             .items_center()
                             .gap_3()
-                            .child(Icon::new(IconName::CircleAlert).size(px(20.)).text_color(CORAL))
                             .child(
-                                div()
-                                    .text_sm()
-                                    .font_medium()
-                                    .text_color(CORAL)
-                                    .child(err),
-                            ),
+                                Icon::new(IconName::CircleAlert)
+                                    .size(px(20.))
+                                    .text_color(CORAL),
+                            )
+                            .child(div().text_sm().font_medium().text_color(CORAL).child(err)),
                     )
                 })
-                .when(!analyzing, |this| {
-                    match current_media {
-                        CurrentMedia::None => this,
-                        CurrentMedia::Single(media) => {
-                            this.child(
-                                v_flex()
+                .when(!analyzing, |this| match current_media {
+                    CurrentMedia::None => this,
+                    CurrentMedia::Single(media) => this.child(
+                        v_flex()
+                            .w_full()
+                            .max_w(px(760.))
+                            .gap_4()
+                            .child(single_media_card(&media))
+                            .child(
+                                h_flex()
                                     .w_full()
-                                    .max_w(px(760.))
-                                    .gap_4()
-                                    .child(single_media_card(&media))
+                                    .justify_between()
+                                    .items_center()
                                     .child(
-                                        h_flex()
-                                            .w_full()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(
-                                                Button::new("explore-formats")
-                                                    .outline()
-                                                    .icon(IconName::Layers)
-                                                    .label("View Available Formats")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.state.update(cx, |s, cx| {
-                                                            s.active_route = AppRoute::Config;
-                                                            cx.notify();
-                                                        });
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new("continue")
-                                                    .primary()
-                                                    .icon(IconName::ArrowRight)
-                                                    .label("Continue to Configure")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.state.update(cx, |s, cx| {
-                                                            s.active_route = AppRoute::Config;
-                                                            cx.notify();
-                                                        });
-                                                    })),
-                                            ),
-                                    ),
-                            )
-                        }
-                        CurrentMedia::Playlist(playlist) => {
-                            this.child(
-                                v_flex()
-                                    .w_full()
-                                    .max_w(px(760.))
-                                    .gap_4()
-                                    .child(playlist_media_card(&playlist))
+                                        Button::new("explore-formats")
+                                            .outline()
+                                            .icon(IconName::Layers)
+                                            .label("View Available Formats")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |s, cx| {
+                                                    s.active_route = AppRoute::Config;
+                                                    cx.notify();
+                                                });
+                                            })),
+                                    )
                                     .child(
-                                        h_flex()
-                                            .w_full()
-                                            .justify_end()
-                                            .child(
-                                                Button::new("continue-pl")
-                                                    .primary()
-                                                    .icon(IconName::ArrowRight)
-                                                    .label("Continue to Configure")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.state.update(cx, |s, cx| {
-                                                            s.active_route = AppRoute::Config;
-                                                            cx.notify();
-                                                        });
-                                                    })),
-                                            ),
+                                        Button::new("continue")
+                                            .primary()
+                                            .icon(IconName::ArrowRight)
+                                            .label("Continue to Configure")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |s, cx| {
+                                                    s.active_route = AppRoute::Config;
+                                                    cx.notify();
+                                                });
+                                            })),
                                     ),
-                            )
-                        }
-                    }
+                            ),
+                    ),
+                    CurrentMedia::Playlist(playlist) => this.child(
+                        v_flex()
+                            .w_full()
+                            .max_w(px(760.))
+                            .gap_4()
+                            .child(playlist_media_card(&playlist))
+                            .child(
+                                h_flex().w_full().justify_end().child(
+                                    Button::new("continue-pl")
+                                        .primary()
+                                        .icon(IconName::ArrowRight)
+                                        .label("Continue to Configure")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.state.update(cx, |s, cx| {
+                                                s.active_route = AppRoute::Config;
+                                                cx.notify();
+                                            });
+                                        })),
+                                ),
+                            ),
+                    ),
                 })
         }
     }

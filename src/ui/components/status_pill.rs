@@ -1,11 +1,11 @@
 //! Uppercase status pills with tinted backgrounds, per the Nocturnal Studio design system.
 
-use gpui_kit::component::h_flex;
+use crate::models::download::DownloadStatus;
 use crate::ui::prelude::*;
 use crate::ui::theme::{
     CORAL, PILL_AMBER, PILL_GREEN, PILL_RED, RADIUS_PILL, TEAL_BRIGHT, TEXT_MUTED,
 };
-use crate::models::download::DownloadStatus;
+use gpui_kit::component::h_flex;
 
 pub fn status_pill(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement {
     let mut bg = color;

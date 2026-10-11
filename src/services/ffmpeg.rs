@@ -73,9 +73,7 @@ impl FfmpegService {
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let status = cmd
-            .status()
-            .map_err(|e| AppError::Ffmpeg(e.to_string()))?;
+        let status = cmd.status().map_err(|e| AppError::Ffmpeg(e.to_string()))?;
 
         if status.success() {
             Ok(())
@@ -142,18 +140,14 @@ impl FfmpegService {
     /// Run arbitrary ffmpeg args (used by ConversionService).
     pub fn run_args(&self, args: &[&str]) -> Result<()> {
         let mut cmd = Command::new(&self.binary);
-        cmd.args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+        cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let status = cmd
-            .status()
-            .map_err(|e| AppError::Ffmpeg(e.to_string()))?;
+        let status = cmd.status().map_err(|e| AppError::Ffmpeg(e.to_string()))?;
 
         if status.success() {
             Ok(())

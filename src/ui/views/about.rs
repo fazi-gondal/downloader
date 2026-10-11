@@ -4,9 +4,9 @@
 //! created (on app open) and again whenever the user clicks "Check Status".
 //! Both checks run on the background thread so the UI never blocks.
 
-use gpui_kit::component::button::Button;
-use gpui_kit::component::{h_flex, v_flex, Icon};
 use crate::ui::prelude::*;
+use gpui_kit::component::button::Button;
+use gpui_kit::component::{Icon, h_flex, v_flex};
 
 use crate::services::{FfmpegService, YtDlpService};
 
@@ -113,8 +113,16 @@ impl Render for AboutView {
             .clone()
             .unwrap_or_else(|| "Checking…".into());
 
-        let ytdlp_ok = self.ytdlp_status.as_ref().map(|s| !s.starts_with("Missing")).unwrap_or(false);
-        let ffmpeg_ok = self.ffmpeg_status.as_ref().map(|s| !s.starts_with("Missing")).unwrap_or(false);
+        let ytdlp_ok = self
+            .ytdlp_status
+            .as_ref()
+            .map(|s| !s.starts_with("Missing"))
+            .unwrap_or(false);
+        let ffmpeg_ok = self
+            .ffmpeg_status
+            .as_ref()
+            .map(|s| !s.starts_with("Missing"))
+            .unwrap_or(false);
 
         v_flex()
             .size_full()

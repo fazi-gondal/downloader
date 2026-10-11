@@ -17,9 +17,8 @@ impl HistoryService {
         match Self::try_load() {
             Ok(s) => s,
             Err(_) => {
-                let path = Self::history_path().unwrap_or_else(|_| {
-                    PathBuf::from(".").join("history.json")
-                });
+                let path = Self::history_path()
+                    .unwrap_or_else(|_| PathBuf::from(".").join("history.json"));
                 Self {
                     path,
                     entries: Vec::new(),

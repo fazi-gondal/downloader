@@ -53,7 +53,7 @@ impl YtDlpService {
     pub fn extract_info(&self, url: &str) -> Result<ExtractedInfo> {
         let mut args = vec![
             "--dump-single-json".into(),
-            "--no-playlist".into(),
+            "--yes-playlist".into(),
             "--no-warnings".into(),
             "--no-call-home".into(),
             "--remote-components".into(),
@@ -65,14 +65,18 @@ impl YtDlpService {
         args.push(url.to_string());
 
         let mut yt_cmd = std::process::Command::new(&self.binary);
-        yt_cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        yt_cmd
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             yt_cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let output = yt_cmd.output()
+        let output = yt_cmd
+            .output()
             .map_err(|e| AppError::ytdlp(format!("failed to spawn yt-dlp: {e}")))?;
 
         if !output.status.success() {
@@ -99,14 +103,18 @@ impl YtDlpService {
         args.push(url.to_string());
 
         let mut yt_cmd = std::process::Command::new(&self.binary);
-        yt_cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        yt_cmd
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             yt_cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        let output = yt_cmd.output()
+        let output = yt_cmd
+            .output()
             .map_err(|e| AppError::ytdlp(format!("failed to spawn yt-dlp: {e}")))?;
 
         if !output.status.success() {
@@ -146,7 +154,11 @@ impl YtDlpService {
         let formats = json
             .get("formats")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(Self::parse_format).collect::<Vec<_>>())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Self::parse_format)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
 
         let subtitles = Self::parse_subtitles(json);
@@ -257,10 +269,7 @@ impl YtDlpService {
 
         let (filesize, filesize_is_approx) = match f.get("filesize").and_then(|v| v.as_u64()) {
             Some(s) => (Some(s), false),
-            None => (
-                f.get("filesize_approx").and_then(|v| v.as_u64()),
-                true,
-            ),
+            None => (f.get("filesize_approx").and_then(|v| v.as_u64()), true),
         };
 
         Some(FormatInfo {
@@ -296,21 +305,22 @@ impl YtDlpService {
 
     fn parse_subtitles(json: &Value) -> Vec<SubtitleTrack> {
         let mut tracks = Vec::new();
-        // ONLY parse uploaded subtitles ("subtitles"), NEVER "automatic_captions"
-        if let Some(subs) = json.get("subtitles").and_then(|v| v.as_object()) {
-            for (lang, entries) in subs {
-                let name = entries
-                    .as_array()
-                    .and_then(|arr| arr.first())
-                    .and_then(|e| e.get("name"))
-                    .and_then(|n| n.as_str())
-                    .map(str::to_string);
+        for (key, is_automatic) in [("subtitles", false), ("automatic_captions", true)] {
+            if let Some(subs) = json.get(key).and_then(|v| v.as_object()) {
+                for (lang, entries) in subs {
+                    let name = entries
+                        .as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|e| e.get("name"))
+                        .and_then(|n| n.as_str())
+                        .map(str::to_string);
 
-                tracks.push(SubtitleTrack {
-                    language: lang.clone(),
-                    name,
-                    is_automatic: false,
-                });
+                    tracks.push(SubtitleTrack {
+                        language: lang.clone(),
+                        name,
+                        is_automatic,
+                    });
+                }
             }
         }
         tracks.sort_by(|a, b| a.language.cmp(&b.language));
@@ -336,7 +346,8 @@ impl YtDlpService {
             audio_channels: Option<i64>,
         }
 
-        let mut track_best: std::collections::BTreeMap<String, TrackCandidate> = std::collections::BTreeMap::new();
+        let mut track_best: std::collections::BTreeMap<String, TrackCandidate> =
+            std::collections::BTreeMap::new();
 
         for f in formats {
             let vcodec = f.get("vcodec").and_then(|v| v.as_str());
@@ -346,7 +357,10 @@ impl YtDlpService {
 
             let is_audio_only = vcodec == Some("none")
                 || resolution == "audio only"
-                || (vcodec.is_none() && height.is_none() && !acodec_val.is_empty() && acodec_val != "none");
+                || (vcodec.is_none()
+                    && height.is_none()
+                    && !acodec_val.is_empty()
+                    && acodec_val != "none");
 
             if !is_audio_only {
                 continue;
@@ -355,20 +369,20 @@ impl YtDlpService {
             let fid = f
                 .get("format_id")
                 .and_then(|v| {
-                    if let Some(s) = v.as_str() {
-                        Some(s.to_string())
-                    } else if let Some(n) = v.as_i64() {
-                        Some(n.to_string())
-                    } else {
-                        None
-                    }
+                    v.as_str()
+                        .map(str::to_string)
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
                 })
                 .unwrap_or_default();
             if fid.is_empty() {
                 continue;
             }
 
-            let ext = f.get("ext").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let ext = f
+                .get("ext")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if ext == "mhtml" {
                 continue;
             }
@@ -401,7 +415,10 @@ impl YtDlpService {
             };
 
             let note = f.get("format_note").and_then(|v| v.as_str()).unwrap_or("");
-            let lang_name = f.get("language_name").and_then(|v| v.as_str()).unwrap_or("");
+            let lang_name = f
+                .get("language_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             let track_name = if !at_display.is_empty() {
                 at_display.to_string()
@@ -429,13 +446,8 @@ impl YtDlpService {
             let replace = match track_best.get(&track_key) {
                 None => true,
                 Some(existing) => {
-                    if is_opus && !existing.is_opus {
-                        true
-                    } else if is_opus == existing.is_opus && abr > existing.abr {
-                        true
-                    } else {
-                        false
-                    }
+                    (is_opus && !existing.is_opus)
+                        || (is_opus == existing.is_opus && abr > existing.abr)
                 }
             };
 
@@ -444,12 +456,20 @@ impl YtDlpService {
                     track_key,
                     TrackCandidate {
                         format_id: fid,
-                        language: if lang.is_empty() { None } else { Some(lang.to_string()) },
+                        language: if lang.is_empty() {
+                            None
+                        } else {
+                            Some(lang.to_string())
+                        },
                         track_name,
                         abr,
                         ext,
                         acodec,
-                        note: if note.is_empty() { None } else { Some(note.to_string()) },
+                        note: if note.is_empty() {
+                            None
+                        } else {
+                            Some(note.to_string())
+                        },
                         is_opus,
                         asr,
                         audio_channels,
@@ -462,9 +482,18 @@ impl YtDlpService {
             .into_values()
             .map(|best| {
                 let mut parts = vec![best.track_name.clone()];
-                let acodec_base = best.acodec.split('.').next().unwrap_or(&best.acodec).to_lowercase();
+                let acodec_base = best
+                    .acodec
+                    .split('.')
+                    .next()
+                    .unwrap_or(&best.acodec)
+                    .to_lowercase();
 
-                if !best.ext.is_empty() && !acodec_base.is_empty() && acodec_base != "none" && acodec_base != best.ext {
+                if !best.ext.is_empty()
+                    && !acodec_base.is_empty()
+                    && acodec_base != "none"
+                    && acodec_base != best.ext
+                {
                     parts.push(format!("{} ({})", best.ext, acodec_base));
                 } else if !best.ext.is_empty() {
                     parts.push(best.ext.clone());
@@ -473,10 +502,10 @@ impl YtDlpService {
                 if best.abr > 0.0 {
                     parts.push(format!("{} kbps", best.abr.round() as u64));
                 }
-                if let Some(ch) = best.audio_channels {
-                    if ch > 2 {
-                        parts.push(format!("{ch}ch"));
-                    }
+                if let Some(ch) = best.audio_channels
+                    && ch > 2
+                {
+                    parts.push(format!("{ch}ch"));
                 }
                 if let Some(asr) = best.asr {
                     if asr >= 1000 {
@@ -493,8 +522,16 @@ impl YtDlpService {
                     title: Some(best.track_name),
                     format_id: best.format_id,
                     abr: if best.abr > 0.0 { Some(best.abr) } else { None },
-                    ext: if best.ext.is_empty() { None } else { Some(best.ext) },
-                    acodec: if best.acodec.is_empty() { None } else { Some(best.acodec) },
+                    ext: if best.ext.is_empty() {
+                        None
+                    } else {
+                        Some(best.ext)
+                    },
+                    acodec: if best.acodec.is_empty() {
+                        None
+                    } else {
+                        Some(best.acodec)
+                    },
                     label: Some(label),
                     note: best.note,
                 }
@@ -505,13 +542,13 @@ impl YtDlpService {
         tracks.sort_by(|a, b| {
             let a_has_lang = a.language.is_some();
             let b_has_lang = b.language.is_some();
-            b_has_lang
-                .cmp(&a_has_lang)
-                .then_with(|| {
-                    let a_abr = a.abr.unwrap_or(0.0);
-                    let b_abr = b.abr.unwrap_or(0.0);
-                    b_abr.partial_cmp(&a_abr).unwrap_or(std::cmp::Ordering::Equal)
-                })
+            b_has_lang.cmp(&a_has_lang).then_with(|| {
+                let a_abr = a.abr.unwrap_or(0.0);
+                let b_abr = b.abr.unwrap_or(0.0);
+                b_abr
+                    .partial_cmp(&a_abr)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
 
         tracks
@@ -619,11 +656,25 @@ fn common_lang_name(code: &str) -> &'static str {
 
 fn clean_track_name(l_code: &str, f_note: &str, l_name: &str) -> String {
     let mut clean = f_note.to_string();
-    for suffix in [", low", ", medium", ", high", ", ultralow", ", drc", ", DRC", "low", "medium", "high", "drc", "DRC"] {
+    for suffix in [
+        ", low",
+        ", medium",
+        ", high",
+        ", ultralow",
+        ", drc",
+        ", DRC",
+        "low",
+        "medium",
+        "high",
+        "drc",
+        "DRC",
+    ] {
         clean = clean.replace(suffix, "");
     }
     let lower = clean.to_lowercase();
-    let is_original = lower.contains("original (default)") || lower.contains("original(default)") || lower.contains("original");
+    let is_original = lower.contains("original (default)")
+        || lower.contains("original(default)")
+        || lower.contains("original");
 
     let base_name = if !l_name.trim().is_empty() {
         l_name.trim().to_string()
@@ -639,7 +690,10 @@ fn clean_track_name(l_code: &str, f_note: &str, l_name: &str) -> String {
     };
 
     if is_original {
-        if base_name.is_empty() || base_name.eq_ignore_ascii_case("original") || base_name.eq_ignore_ascii_case("audio") {
+        if base_name.is_empty()
+            || base_name.eq_ignore_ascii_case("original")
+            || base_name.eq_ignore_ascii_case("audio")
+        {
             "Original Audio".to_string()
         } else if !base_name.contains("(Original)") {
             format!("{base_name} (Original)")
@@ -659,7 +713,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parse_subtitles_ignores_automatic_captions() {
+    fn parse_subtitles_includes_automatic_captions() {
         let payload = json!({
             "subtitles": {
                 "en": [{"ext": "vtt", "name": "English"}],
@@ -672,12 +726,15 @@ mod tests {
         });
 
         let subs = YtDlpService::parse_subtitles(&payload);
-        assert_eq!(subs.len(), 2);
-        assert_eq!(subs[0].language, "en");
-        assert_eq!(subs[0].name.as_deref(), Some("English"));
-        assert_eq!(subs[0].display_label(), "English (en)");
-        assert_eq!(subs[1].language, "es");
-        assert!(!subs.iter().any(|s| s.language == "fr"));
+        assert_eq!(subs.len(), 4);
+        let uploaded_en = subs
+            .iter()
+            .find(|s| s.language == "en" && !s.is_automatic)
+            .expect("uploaded English subtitles");
+        assert_eq!(uploaded_en.name.as_deref(), Some("English"));
+        assert_eq!(uploaded_en.display_label(), "English (en)");
+        assert!(subs.iter().any(|s| s.language == "es" && !s.is_automatic));
+        assert!(subs.iter().any(|s| s.language == "fr" && s.is_automatic));
     }
 
     #[test]
@@ -763,8 +820,17 @@ mod tests {
 
         let tracks = YtDlpService::derive_audio_tracks(&payload);
         assert_eq!(tracks.len(), 3);
-        assert_eq!(tracks[0].display_label(), "English - Original · webm (opus) · 160 kbps · [id: 251-en]");
-        assert_eq!(tracks[1].display_label(), "Spanish dubbed · webm (opus) · 160 kbps · [id: 251-es]");
-        assert_eq!(tracks[2].display_label(), "French dubbed · webm (opus) · 160 kbps · [id: 251-fr]");
+        assert_eq!(
+            tracks[0].display_label(),
+            "English - Original · webm (opus) · 160 kbps · [id: 251-en]"
+        );
+        assert_eq!(
+            tracks[1].display_label(),
+            "Spanish dubbed · webm (opus) · 160 kbps · [id: 251-es]"
+        );
+        assert_eq!(
+            tracks[2].display_label(),
+            "French dubbed · webm (opus) · 160 kbps · [id: 251-fr]"
+        );
     }
 }

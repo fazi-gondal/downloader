@@ -1,19 +1,21 @@
 //! Full settings editors — path, concurrency, proxy, toggles, theme.
 
-use std::path::PathBuf;
-use gpui_kit::component::button::Button;
-use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{h_flex, v_flex, Theme, ThemeMode as KitThemeMode};
 use crate::ui::prelude::*;
+use gpui_kit::component::button::Button;
+use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{Theme, ThemeMode as KitThemeMode, h_flex, v_flex};
+use std::path::PathBuf;
 
 use crate::config::{AppSettings, ThemeMode};
 use crate::core::AppState;
+use crate::models::SubtitleMode;
 
 pub struct SettingsView {
     state: Entity<AppState>,
     download_dir_input: Entity<InputState>,
     proxy_input: Entity<InputState>,
+    custom_headers_input: Entity<TextareaState>,
     cookies_input: Entity<InputState>,
 }
 
@@ -30,6 +32,11 @@ impl SettingsView {
                 .default_value(settings.proxy.clone())
                 .placeholder("http://… or socks5://… (optional)")
         });
+        let custom_headers_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .default_value(settings.custom_headers.clone())
+                .rows(5)
+        });
         let cookies_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(settings.cookies_browser.clone())
@@ -39,6 +46,7 @@ impl SettingsView {
             state,
             download_dir_input,
             proxy_input,
+            custom_headers_input,
             cookies_input,
         }
     }
@@ -76,6 +84,7 @@ impl SettingsView {
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self.download_dir_input.read(cx).value().trim().to_string();
         let proxy = self.proxy_input.read(cx).value().trim().to_string();
+        let custom_headers = self.custom_headers_input.read(cx).value().to_string();
         let cookies = self.cookies_input.read(cx).value().trim().to_string();
 
         self.state.update(cx, |s, cx| {
@@ -83,6 +92,7 @@ impl SettingsView {
                 s.settings.download_dir = PathBuf::from(dir);
             }
             s.settings.proxy = proxy;
+            s.settings.custom_headers = custom_headers;
             s.settings.cookies_browser = cookies;
 
             if let Err(e) = s.settings.save() {
@@ -148,6 +158,20 @@ impl SettingsView {
     fn set_write_subtitles(&mut self, v: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.settings.write_subtitles = v;
+            s.current_options.subtitle_mode = if v {
+                SubtitleMode::All
+            } else {
+                SubtitleMode::None
+            };
+            s.current_options.subtitle_langs = if v {
+                if s.settings.subtitle_langs.is_empty() {
+                    vec!["all".to_string()]
+                } else {
+                    s.settings.subtitle_langs.clone()
+                }
+            } else {
+                Vec::new()
+            };
             cx.notify();
         });
     }
@@ -155,6 +179,7 @@ impl SettingsView {
     fn set_multi_audio(&mut self, v: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.settings.multi_audio = v;
+            s.current_options.multi_audio = v;
             cx.notify();
         });
     }
@@ -162,6 +187,7 @@ impl SettingsView {
     fn set_embed_thumbnail(&mut self, v: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.settings.embed_thumbnail = v;
+            s.current_options.embed_thumbnail = v;
             cx.notify();
         });
     }
@@ -169,6 +195,7 @@ impl SettingsView {
     fn set_embed_metadata(&mut self, v: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.settings.embed_metadata = v;
+            s.current_options.embed_metadata = v;
             cx.notify();
         });
     }
@@ -187,7 +214,10 @@ impl SettingsView {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("downloader_settings.json");
             if std::fs::write(&export_path, json).is_ok() {
-                window.push_notification(format!("Settings exported to {}", export_path.display()), cx);
+                window.push_notification(
+                    format!("Settings exported to {}", export_path.display()),
+                    cx,
+                );
             } else {
                 window.push_notification("Failed to export settings file.", cx);
             }
@@ -216,26 +246,33 @@ impl SettingsView {
             if let Ok(output) = out {
                 let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !file_path.is_empty() {
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        if let Ok(imported) = serde_json::from_str::<AppSettings>(&content) {
-                            self.state.update(cx, |s, cx| {
-                                s.settings = imported.clone();
-                                let _ = s.settings.save();
-                                s.apply_settings_to_services();
-                                cx.notify();
-                            });
-                            self.download_dir_input.update(cx, |input, cx| {
-                                input.set_value(imported.download_dir.display().to_string(), window, cx);
-                            });
-                            self.proxy_input.update(cx, |input, cx| {
-                                input.set_value(imported.proxy.clone(), window, cx);
-                            });
-                            self.cookies_input.update(cx, |input, cx| {
-                                input.set_value(imported.cookies_browser.clone(), window, cx);
-                            });
-                            window.push_notification("Settings imported successfully.", cx);
-                            return;
-                        }
+                    if let Ok(content) = std::fs::read_to_string(&file_path)
+                        && let Ok(imported) = serde_json::from_str::<AppSettings>(&content)
+                    {
+                        self.state.update(cx, |s, cx| {
+                            s.settings = imported.clone();
+                            let _ = s.settings.save();
+                            s.apply_settings_to_services();
+                            cx.notify();
+                        });
+                        self.download_dir_input.update(cx, |input, cx| {
+                            input.set_value(
+                                imported.download_dir.display().to_string(),
+                                window,
+                                cx,
+                            );
+                        });
+                        self.proxy_input.update(cx, |input, cx| {
+                            input.set_value(imported.proxy.clone(), window, cx);
+                        });
+                        self.custom_headers_input.update(cx, |input, cx| {
+                            input.set_value(imported.custom_headers.clone(), window, cx);
+                        });
+                        self.cookies_input.update(cx, |input, cx| {
+                            input.set_value(imported.cookies_browser.clone(), window, cx);
+                        });
+                        window.push_notification("Settings imported successfully.", cx);
+                        return;
                     }
                     window.push_notification("Failed to parse settings JSON.", cx);
                 }
@@ -256,6 +293,9 @@ impl SettingsView {
         });
         self.proxy_input.update(cx, |input, cx| {
             input.set_value(defaults.proxy.clone(), window, cx);
+        });
+        self.custom_headers_input.update(cx, |input, cx| {
+            input.set_value(defaults.custom_headers.clone(), window, cx);
         });
         self.cookies_input.update(cx, |input, cx| {
             input.set_value(defaults.cookies_browser.clone(), window, cx);
@@ -334,6 +374,14 @@ impl Render for SettingsView {
                     )
                     .child(label("Network Proxy (Optional)", cx))
                     .child(Input::new(&self.proxy_input))
+                    .child(label("Custom HTTP Headers (Optional)", cx))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("One per line as Header-Name: value. Blank lines and lines starting with # are ignored; invalid lines are skipped."),
+                    )
+                    .child(Textarea::new(&self.custom_headers_input).w_full().h(px(120.)))
                     .child(label("Cookies from Browser (Optional)", cx))
                     .child(Input::new(&self.cookies_input)),
             )

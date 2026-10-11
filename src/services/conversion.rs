@@ -6,9 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::models::{
-    ConversionId, ConversionProfile, ConversionStatus, ConversionTask,
-};
+use crate::models::{ConversionId, ConversionProfile, ConversionStatus, ConversionTask};
 use crate::services::FfmpegService;
 
 pub struct ConversionService {
@@ -49,7 +47,11 @@ impl ConversionService {
         &self.output_dir
     }
 
-    pub fn enqueue(&self, input_path: impl Into<String>, profile: ConversionProfile) -> ConversionId {
+    pub fn enqueue(
+        &self,
+        input_path: impl Into<String>,
+        profile: ConversionProfile,
+    ) -> ConversionId {
         self.enqueue_with_options(input_path, profile, true)
     }
 
@@ -73,49 +75,47 @@ impl ConversionService {
             .lock()
             .map(|m| {
                 let mut v: Vec<_> = m.values().cloned().collect();
-                v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                v.sort_by_key(|a| std::cmp::Reverse(a.created_at));
                 v
             })
             .unwrap_or_default()
     }
 
     pub fn cancel(&self, id: ConversionId) {
-        if let Ok(mut map) = self.tasks.lock() {
-            if let Some(t) = map.get_mut(&id) {
-                if !t.status.is_terminal() {
-                    t.status = ConversionStatus::Cancelled;
-                }
-            }
+        if let Ok(mut map) = self.tasks.lock()
+            && let Some(t) = map.get_mut(&id)
+            && !t.status.is_terminal()
+        {
+            t.status = ConversionStatus::Cancelled;
         }
 
-        if let Ok(mut running) = self.running.lock() {
-            if let Some(pid) = running.remove(&id) {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    let _ = Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/F", "/T"])
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
-                }
+        if let Ok(mut running) = self.running.lock()
+            && let Some(pid) = running.remove(&id)
+        {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
             }
         }
     }
 
     pub fn retry(&self, id: ConversionId) {
-        if let Ok(mut map) = self.tasks.lock() {
-            if let Some(t) = map.get_mut(&id) {
-                if t.status.is_terminal() {
-                    t.status = ConversionStatus::Queued;
-                    t.progress = 0.0;
-                    t.error = None;
-                }
-            }
+        if let Ok(mut map) = self.tasks.lock()
+            && let Some(t) = map.get_mut(&id)
+            && t.status.is_terminal()
+        {
+            t.status = ConversionStatus::Queued;
+            t.progress = 0.0;
+            t.error = None;
         }
         self.spawn(id);
     }
@@ -166,9 +166,7 @@ impl ConversionService {
             let args = build_ffmpeg_args(&input_path, &out_path, profile);
 
             let mut cmd = Command::new(&binary);
-            cmd.args(&args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
+            cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
 
             #[cfg(windows)]
             {
@@ -180,11 +178,11 @@ impl ConversionService {
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    if let Ok(mut map) = tasks.lock() {
-                        if let Some(t) = map.get_mut(&id) {
-                            t.status = ConversionStatus::Failed;
-                            t.error = Some(format!("Failed to spawn ffmpeg: {e}"));
-                        }
+                    if let Ok(mut map) = tasks.lock()
+                        && let Some(t) = map.get_mut(&id)
+                    {
+                        t.status = ConversionStatus::Failed;
+                        t.error = Some(format!("Failed to spawn ffmpeg: {e}"));
                     }
                     return;
                 }
@@ -198,29 +196,29 @@ impl ConversionService {
             let status = child.wait();
             let _ = running.lock().map(|mut r| r.remove(&id));
 
-            if let Ok(mut map) = tasks.lock() {
-                if let Some(t) = map.get_mut(&id) {
-                    if t.status == ConversionStatus::Cancelled {
-                        return;
-                    }
-                    match status {
-                        Ok(s) if s.success() => {
-                            t.status = ConversionStatus::Completed;
-                            t.progress = 1.0;
-                            t.output_path = Some(out_path.to_string_lossy().to_string());
+            if let Ok(mut map) = tasks.lock()
+                && let Some(t) = map.get_mut(&id)
+            {
+                if t.status == ConversionStatus::Cancelled {
+                    return;
+                }
+                match status {
+                    Ok(s) if s.success() => {
+                        t.status = ConversionStatus::Completed;
+                        t.progress = 1.0;
+                        t.output_path = Some(out_path.to_string_lossy().to_string());
 
-                            if !keep_original && input_path.exists() {
-                                let _ = std::fs::remove_file(&input_path);
-                            }
+                        if !keep_original && input_path.exists() {
+                            let _ = std::fs::remove_file(&input_path);
                         }
-                        Ok(s) => {
-                            t.status = ConversionStatus::Failed;
-                            t.error = Some(format!("ffmpeg exited with code {:?}", s.code()));
-                        }
-                        Err(e) => {
-                            t.status = ConversionStatus::Failed;
-                            t.error = Some(format!("ffmpeg wait error: {e}"));
-                        }
+                    }
+                    Ok(s) => {
+                        t.status = ConversionStatus::Failed;
+                        t.error = Some(format!("ffmpeg exited with code {:?}", s.code()));
+                    }
+                    Err(e) => {
+                        t.status = ConversionStatus::Failed;
+                        t.error = Some(format!("ffmpeg wait error: {e}"));
                     }
                 }
             }

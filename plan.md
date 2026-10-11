@@ -190,5 +190,37 @@ Use this to close the gaps without redoing what already works.
 
 ## F. Summary
 
-- **Included:** end-to-end shell, analyze, basic configure, queue, network flags, converter profiles, history, settings, about, CI.  
-- **Missing (main gaps):** full Config option matrix (container, fps, audio format/bitrate, subtitle modes, per-track audio), **format explorer**, richer download lifecycle, custom headers, history filters/redownload/open folder, converter flexibility, settings import/export, live theme, packaging/bundled tools.
+- **Included:** end-to-end shell, analysis, configure controls, format explorer,
+  queue lifecycle, network flags including custom headers, converter profiles,
+  history, settings, About, and CI.
+- **Remaining:** thumbnails, custom audio bitrate and exact estimates, per-item
+  playlist metadata analysis, flexible/batch conversion, first-class events and
+  toasts, i18n, optional runtime discovery, and installer/bundled-tool packaging.
+
+## G. Reconciliation after the reliability pass
+
+The source has progressed beyond several items in the original “missing” tables:
+
+- Container, resolution, FPS, audio format, audio quality presets, subtitle modes,
+  per-track audio selection, and the raw format explorer are implemented in
+  `src/ui/views/config_view.rs`.
+- History filters, re-download, reveal/open, settings import/export, Windows
+  file pickers, and dependency links are implemented.
+- Playlist/history downloads now compile their selected `DownloadOptions` even
+  when detailed `MediaInfo` is unavailable.
+- Queue completion now releases a slot and starts the next queued task;
+  processing status and byte progress are surfaced.
+- Custom HTTP headers are persisted, editable in Settings, and passed to yt-dlp
+  as repeated `--add-header` arguments.
+- Automatic captions are included in subtitle discovery and custom subtitle
+  selection.
+
+The remaining roadmap is narrower and should be implemented next:
+
+1. Actual thumbnail rendering in media/download cards.
+2. Custom audio bitrate input and more accurate size estimates.
+3. Per-item playlist metadata analysis when exact format IDs are required.
+4. Flexible converter modes, bitrate selection, and batch file selection.
+5. First-class event/toast handling, i18n, and platform-native non-Windows
+   file pickers.
+6. Optional JS-runtime discovery and bundled-tool/installer packaging.

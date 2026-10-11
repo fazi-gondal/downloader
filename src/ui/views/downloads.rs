@@ -1,9 +1,9 @@
 //! Active and queued downloads with rich progress, status badges, and actions.
 
-use std::path::{Path, PathBuf};
-use gpui_kit::component::button::Button;
-use gpui_kit::component::{h_flex, v_flex, Icon};
 use crate::ui::prelude::*;
+use gpui_kit::component::button::Button;
+use gpui_kit::component::{Icon, h_flex, v_flex};
+use std::path::Path;
 
 use crate::core::AppState;
 use crate::models::{DownloadId, DownloadStatus, DownloadTask};
@@ -121,7 +121,9 @@ impl DownloadsView {
         }
         #[cfg(not(windows))]
         {
-            let _ = std::process::Command::new("xdg-open").arg(download_dir).spawn();
+            let _ = std::process::Command::new("xdg-open")
+                .arg(download_dir)
+                .spawn();
         }
     }
 }
@@ -137,8 +139,14 @@ impl Render for DownloadsView {
         let download_dir = self.state.read(cx).downloads.download_dir().clone();
         let total_count = all_tasks.len();
         let active_count = all_tasks.iter().filter(|t| !t.status.is_terminal()).count();
-        let completed_count = all_tasks.iter().filter(|t| t.status == DownloadStatus::Completed).count();
-        let failed_count = all_tasks.iter().filter(|t| t.status == DownloadStatus::Failed || t.status == DownloadStatus::Cancelled).count();
+        let completed_count = all_tasks
+            .iter()
+            .filter(|t| t.status == DownloadStatus::Completed)
+            .count();
+        let failed_count = all_tasks
+            .iter()
+            .filter(|t| t.status == DownloadStatus::Failed || t.status == DownloadStatus::Cancelled)
+            .count();
 
         let current_filter = self.filter;
         let filtered_tasks: Vec<DownloadTask> = all_tasks
@@ -280,18 +288,19 @@ impl Render for DownloadsView {
 
 fn filter_chip(id: &'static str, label: String, active: bool, _cx: &App) -> Button {
     let btn = Button::new(id).label(label);
-    if active {
-        btn.primary()
-    } else {
-        btn.ghost()
-    }
+    if active { btn.primary() } else { btn.ghost() }
 }
 
-fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Context<DownloadsView>) -> AnyElement {
+fn render_download_card(
+    task: DownloadTask,
+    download_dir: &Path,
+    cx: &mut Context<DownloadsView>,
+) -> AnyElement {
     let id = task.id;
     let is_active = !task.status.is_terminal();
     let is_completed = task.status == DownloadStatus::Completed;
-    let is_failed = task.status == DownloadStatus::Failed || task.status == DownloadStatus::Cancelled;
+    let is_failed =
+        task.status == DownloadStatus::Failed || task.status == DownloadStatus::Cancelled;
 
     let bar_color = match task.status {
         DownloadStatus::Completed => crate::ui::theme::PILL_GREEN,
@@ -320,7 +329,7 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
 
     let pct_clamped = (task.progress * 100.0).clamp(0.0, 100.0);
     let output_path_clone = task.output_path.clone();
-    let dir_clone = download_dir.clone();
+    let dir_clone = download_dir.to_path_buf();
 
     v_flex()
         .id(format!("task-{}", id))
@@ -362,8 +371,11 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
                                         .child(task.url.clone()),
                                 )
                                 .when_some(task.playlist_title.as_ref(), |this, pl| {
-                                    this.child(div().child("·"))
-                                        .child(div().text_color(cx.theme().primary).child(format!("📁 {pl}")))
+                                    this.child(div().child("·")).child(
+                                        div()
+                                            .text_color(cx.theme().primary)
+                                            .child(format!("📁 {pl}")),
+                                    )
                                 }),
                         ),
                 )
@@ -421,23 +433,20 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
         )
         // Middle row: Progress track bar
         .child(
-            v_flex()
-                .w_full()
-                .gap_1p5()
-                .child(
-                    div()
-                        .w_full()
-                        .h(px(6.))
-                        .rounded_full()
-                        .bg(cx.theme().border)
-                        .child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(bar_color)
-                                .w(relative(task.progress.clamp(0.0, 1.0) as f32)),
-                        ),
-                ),
+            v_flex().w_full().gap_1p5().child(
+                div()
+                    .w_full()
+                    .h(px(6.))
+                    .rounded_full()
+                    .bg(cx.theme().border)
+                    .child(
+                        div()
+                            .h_full()
+                            .rounded_full()
+                            .bg(bar_color)
+                            .w(relative(task.progress.clamp(0.0, 1.0) as f32)),
+                    ),
+            ),
         )
         // Bottom row: Badges, progress %, size, and speed/ETA
         .child(
@@ -450,7 +459,9 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(crate::ui::components::status_pill::download_status_pill(task.status))
+                        .child(crate::ui::components::status_pill::download_status_pill(
+                            task.status,
+                        ))
                         .child(
                             div()
                                 .font_medium()
@@ -463,15 +474,13 @@ fn render_download_card(task: DownloadTask, download_dir: &PathBuf, cx: &mut Con
                                 .child(size_str),
                         ),
                 )
-                .child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if speed_eta.is_empty() {
-                            task.output_path.as_deref().unwrap_or_default().to_string()
-                        } else {
-                            speed_eta
-                        }),
-                ),
+                .child(div().text_color(cx.theme().muted_foreground).child(
+                    if speed_eta.is_empty() {
+                        task.output_path.as_deref().unwrap_or_default().to_string()
+                    } else {
+                        speed_eta
+                    },
+                )),
         )
         // Optional error banner
         .when_some(task.error.as_ref(), |this, err| {
