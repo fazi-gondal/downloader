@@ -408,8 +408,15 @@ pub struct DownloadOptions {
     pub subtitle_langs: Vec<String>,
     pub embed_thumbnail: bool,
     pub embed_metadata: bool,
+    /// Prefer VP9/VP09 video streams, then H.264/AVC1, then any compatible stream.
+    #[serde(default = "default_prefer_vp9_video")]
+    pub prefer_vp9_video: bool,
     pub video_format_id: Option<String>,
     pub audio_format_id: Option<String>,
+}
+
+fn default_prefer_vp9_video() -> bool {
+    true
 }
 
 impl Default for DownloadOptions {
@@ -428,6 +435,7 @@ impl Default for DownloadOptions {
             subtitle_langs: Vec::new(),
             embed_thumbnail: true,
             embed_metadata: true,
+            prefer_vp9_video: true,
             video_format_id: None,
             audio_format_id: None,
         }

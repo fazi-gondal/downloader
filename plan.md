@@ -212,6 +212,8 @@ The source has progressed beyond several items in the original “missing” tab
   processing status and byte progress are surfaced.
 - Custom HTTP headers are persisted, editable in Settings, and passed to yt-dlp
   as repeated `--add-header` arguments.
+- VP9/VP09 video streams are preferred by default, with H.264/AVC1 fallback;
+  the preference remains configurable in Settings.
 - Automatic captions are included in subtitle discovery and custom subtitle
   selection.
 

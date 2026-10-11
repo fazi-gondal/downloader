@@ -45,6 +45,7 @@ impl AppState {
         current_options.multi_audio = settings.multi_audio;
         current_options.embed_thumbnail = settings.embed_thumbnail;
         current_options.embed_metadata = settings.embed_metadata;
+        current_options.prefer_vp9_video = settings.prefer_vp9_video;
 
         let network = NetworkOptions {
             proxy: settings.proxy.clone(),

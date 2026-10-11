@@ -106,6 +106,8 @@ A Rust + GPUI-kit rewrite of the original [Video-Downloader](https://github.com/
 - Cookies exported from browser (chrome, firefox, edge, brave, opera, safari, vivaldi, chromium)
 - Optional download rate limit (KB/s)
 - Custom HTTP headers (`Header-Name: value`, one per line)
+- VP9/VP09 video streams are preferred by default, with H.264/AVC1 and generic
+  compatible streams as fallbacks
 - `--extractor-args youtube:player_client=all` to expose all dubbed language tracks
 
 ### App Shell

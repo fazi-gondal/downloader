@@ -203,6 +203,7 @@ impl SettingsView {
     fn set_prefer_vp9(&mut self, v: bool, cx: &mut Context<Self>) {
         self.state.update(cx, |s, cx| {
             s.settings.prefer_vp9_video = v;
+            s.current_options.prefer_vp9_video = v;
             cx.notify();
         });
     }

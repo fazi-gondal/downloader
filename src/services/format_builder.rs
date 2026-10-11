@@ -106,8 +106,8 @@ impl FormatBuilder {
     fn compile_video_audio(media: Option<&MediaInfo>, options: &DownloadOptions) -> CompiledFormat {
         // ── Format selector ─────────────────────────────────────────────────────
         // Build the video part of the selector.
-        // "bv*" (any video codec) gives yt-dlp more room to pick good formats;
-        // height/fps filters are appended as attribute filters.
+        // Codec-specific `bv*` candidates are ordered by preference, with
+        // height/fps filters appended as attribute filters.
         let height_filter = match options.resolution.height() {
             Some(h) => format!("[height<=?{h}]"),
             None => String::new(),
@@ -121,28 +121,27 @@ impl FormatBuilder {
         let selector = if !options.selected_audio_langs.is_empty() {
             // Custom audio track selection — keys are yt-dlp format IDs
             // (e.g. "251", "140", "233-dub-en") stored from the format list.
-            let video_part = if let Some(ref v) = options.video_format_id {
-                v.clone()
-            } else if filters.is_empty() {
-                "bv*".to_string()
-            } else {
-                format!("bv*{filters}")
-            };
+            let video_parts = Self::video_candidates(options, &filters);
 
             let audio_chain = options.selected_audio_langs.join("+");
 
             if options.selected_audio_langs.len() == 1 {
                 // Single track: try the specific format ID, fall back to best audio.
                 let audio = &options.selected_audio_langs[0];
-                format!("{video_part}+{audio}/{video_part}+ba/b")
+                format!(
+                    "{}/{}/b",
+                    Self::append_to_candidates(&video_parts, audio),
+                    Self::append_to_candidates(&video_parts, "ba")
+                )
             } else {
                 // Multiple tracks: chain all format IDs with --audio-multistreams.
                 // Fallback 1: mergeall grabs every audio stream yt-dlp finds.
                 // Fallback 2: single best audio so the download never fails.
                 format!(
-                    "{video_part}+{audio_chain}\
-/{video_part}+mergeall[vcodec=none]\
-/{video_part}+ba/b"
+                    "{}/{}/{}/b",
+                    Self::append_to_candidates(&video_parts, &audio_chain),
+                    Self::append_to_candidates(&video_parts, "mergeall[vcodec=none]"),
+                    Self::append_to_candidates(&video_parts, "ba")
                 )
             }
         } else {
@@ -150,27 +149,21 @@ impl FormatBuilder {
                 (Some(v), Some(a)) => format!("{v}+{a}"),
                 (Some(v), None) => format!("{v}+ba/b"),
                 (None, Some(a)) => {
-                    let vp = if filters.is_empty() {
-                        "bv*".to_string()
-                    } else {
-                        format!("bv*{filters}")
-                    };
-                    format!("{vp}+{a}")
+                    let video_parts = Self::video_candidates(options, &filters);
+                    format!("{}/b", Self::append_to_candidates(&video_parts, a))
                 }
                 (None, None) => {
                     // "All Audio Tracks" mode: mergeall grabs every available audio stream.
+                    let video_parts = Self::video_candidates(options, &filters);
                     if options.multi_audio
                         || options.audio_tracks_mode == crate::models::AudioTracksMode::All
                     {
-                        if filters.is_empty() {
-                            "bv*+mergeall[vcodec=none]/b".to_string()
-                        } else {
-                            format!("bv*{filters}+mergeall[vcodec=none]/b{filters}/b")
-                        }
-                    } else if filters.is_empty() {
-                        "bv*+ba/b".to_string()
+                        format!(
+                            "{}/b",
+                            Self::append_to_candidates(&video_parts, "mergeall[vcodec=none]")
+                        )
                     } else {
-                        format!("bv*{filters}+ba/b{filters}/b")
+                        format!("{}/b", Self::append_to_candidates(&video_parts, "ba"))
                     }
                 }
             }
@@ -209,9 +202,8 @@ impl FormatBuilder {
         //   Custom mode → fetch ONLY the exact language codes selected by the user
         //
         // IMPORTANT: Do NOT use --write-subs (permanently keeps .vtt files on disk).
-        //            Do NOT use --write-auto-subs in Custom mode — it causes yt-dlp
-        //            to fetch every auto-generated variant (100s of requests) which
-        //            triggers HTTP 429 (Too Many Requests) from YouTube.
+        //            Custom mode uses --sub-langs together with --write-auto-subs
+        //            so an explicitly selected automatic caption is available.
         //
         // With --embed-subs (and no --write-subs), yt-dlp automatically deletes the
         // intermediate .vtt files after embedding them into the video.
@@ -264,7 +256,7 @@ impl FormatBuilder {
         }
     }
 
-    fn video_selector(res: ResolutionPreset, fps: Option<u32>, with_audio: bool) -> String {
+    fn video_selector(res: ResolutionPreset, fps: Option<u32>, prefer_vp9: bool) -> String {
         let height_filter = match res.height() {
             Some(h) => format!("[height<=?{h}]"),
             None => String::new(),
@@ -274,14 +266,37 @@ impl FormatBuilder {
             None => String::new(),
         };
 
-        if with_audio {
-            // Prefer separate best video + best audio, fall back to progressive.
-            format!(
-                "bestvideo{height_filter}{fps_filter}+bestaudio/best{height_filter}{fps_filter}/best"
-            )
+        Self::video_candidates_for_filters(&format!("{height_filter}{fps_filter}"), prefer_vp9)
+            .join("/")
+    }
+
+    fn video_candidates(options: &DownloadOptions, filters: &str) -> Vec<String> {
+        if let Some(ref video_id) = options.video_format_id {
+            vec![video_id.clone()]
         } else {
-            format!("bestvideo{height_filter}{fps_filter}/best{height_filter}")
+            Self::video_candidates_for_filters(filters, options.prefer_vp9_video)
         }
+    }
+
+    fn video_candidates_for_filters(filters: &str, prefer_vp9: bool) -> Vec<String> {
+        let codecs = if prefer_vp9 {
+            ["[vcodec^=vp9]", "[vcodec^=vp09]", "[vcodec^=avc1]", ""]
+        } else {
+            ["[vcodec^=avc1]", "[vcodec^=vp9]", "[vcodec^=vp09]", ""]
+        };
+
+        codecs
+            .into_iter()
+            .map(|codec| format!("bv*{codec}{filters}"))
+            .collect()
+    }
+
+    fn append_to_candidates(candidates: &[String], suffix: &str) -> String {
+        candidates
+            .iter()
+            .map(|video| format!("{video}+{suffix}"))
+            .collect::<Vec<_>>()
+            .join("/")
     }
 
     fn estimate_video_size(
@@ -418,6 +433,36 @@ mod tests {
         let compiled = FormatBuilder::compile(&media, &opts);
         assert!(compiled.format_selector.contains("bv*"));
         assert!(compiled.estimated_size.is_some());
+    }
+
+    #[test]
+    fn default_video_selection_prefers_vp9_then_h264() {
+        let compiled = FormatBuilder::compile(&sample_media(), &DownloadOptions::default());
+        let vp9 = compiled
+            .format_selector
+            .find("[vcodec^=vp9]")
+            .expect("VP9 selector should be first");
+        let vp09 = compiled
+            .format_selector
+            .find("[vcodec^=vp09]")
+            .expect("VP09 selector should be available");
+        let h264 = compiled
+            .format_selector
+            .find("[vcodec^=avc1]")
+            .expect("H.264 fallback should be available");
+
+        assert!(vp9 < vp09);
+        assert!(vp09 < h264);
+    }
+
+    #[test]
+    fn disabling_vp9_preference_starts_with_h264() {
+        let opts = DownloadOptions {
+            prefer_vp9_video: false,
+            ..DownloadOptions::default()
+        };
+        let compiled = FormatBuilder::compile(&sample_media(), &opts);
+        assert!(compiled.format_selector.starts_with("bv*[vcodec^=avc1]"));
     }
 
     #[test]
